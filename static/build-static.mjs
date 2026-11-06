@@ -59,9 +59,6 @@ function fetchViaJina(url) {
       "--fail", "--silent", "--show-error", "--location", "--compressed",
       "--connect-timeout", "20", "--max-time", "45",
       "--user-agent", USER_AGENT,
-      "--header", "X-Respond-With: html",
-      "--header", "X-Retain-Media: html",
-      "--header", "X-With-Iframe: true",
       proxyUrl,
     ], { stdio: ["ignore", "pipe", "pipe"] });
     const stdout = [];
@@ -76,12 +73,37 @@ function fetchViaJina(url) {
   });
 }
 
+function fetchWithBrowser(url) {
+  const browser = process.env.BROWSER_BIN || "google-chrome";
+  return new Promise((resolve, reject) => {
+    const child = spawn(browser, [
+      "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+      "--dump-dom", "--virtual-time-budget=12000", `--user-agent=${USER_AGENT}`,
+      url.href,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0 && Buffer.concat(stdout).length > 500) return resolve(Buffer.concat(stdout).toString("utf8"));
+      reject(new Error(`browser fetch returned ${code}: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+  });
+}
+
 async function fetchListing(url) {
   try {
     return { format: "html", body: await fetchWithCurl(url) };
   } catch (error) {
-    console.warn(`Direct source fetch failed for ${url.href}; using Jina Reader HTML fallback: ${error.message}`);
-    return { format: "html", body: await fetchViaJina(url) };
+    console.warn(`Direct source fetch failed for ${url.href}; trying browser fallback: ${error.message}`);
+    try {
+      return { format: "html", body: await fetchWithBrowser(url) };
+    } catch (browserError) {
+      console.warn(`Browser fetch failed for ${url.href}; using Jina Reader fallback: ${browserError.message}`);
+      return { format: "markdown", body: await fetchViaJina(url) };
+    }
   }
 }
 
@@ -112,29 +134,44 @@ async function streamFor(item) {
     const fetched = await fetchListing(new URL(item.url));
     const article = parseArticle(fetched.body, item.url);
     if (article.hlsUrl) {
-      return {
+      return [{
         name: "Direct HLS stream",
         description: "Direct stream URL extracted from the authorized source player.",
         url: article.hlsUrl,
         behaviorHints: { notWebReady: false },
-      };
+      }];
     }
     if (article.embeds.length) {
-      return {
+      for (const embed of article.embeds) {
+        try {
+          const player = parseArticle((await fetchListing(new URL(embed))).body, item.url);
+          if (player.hlsUrl) {
+            return [{
+              name: "Direct HLS stream",
+              description: "Direct stream URL extracted from the embedded source player.",
+              url: player.hlsUrl,
+              behaviorHints: { notWebReady: false },
+            }];
+          }
+        } catch (embedError) {
+          console.warn(`Could not inspect embedded player ${embed}: ${embedError.message}`);
+        }
+      }
+      return [{
         name: "Open embedded player",
         description: "The source exposes an embedded player but not a stable direct media URL.",
         externalUrl: article.embeds[0],
-      };
+      }];
     }
   } catch (error) {
     console.warn(`Could not resolve a direct stream for ${item.url}: ${error.message}`);
   }
 
-  return {
+  return [{
     name: "Open source page",
     description: "Open the original Rugby24 page and use its embedded player.",
     externalUrl: item.url,
-  };
+  }];
 }
 
 await rm(DIST, { recursive: true, force: true });
@@ -158,7 +195,7 @@ for (const catalog of catalogs) {
 
 for (const item of items) {
   const id = idFor(item);
-  const stream = await streamFor(item);
+  const streams = await streamFor(item);
   const releaseInfo = item.publishedAt.toISOString().slice(0, 10);
   await writeJson(`meta/movie/${id}.json`, {
     meta: {
@@ -173,7 +210,7 @@ for (const item of items) {
     },
   });
   await writeJson(`stream/movie/${id}.json`, {
-    streams: [stream],
+    streams,
   });
 }
 
