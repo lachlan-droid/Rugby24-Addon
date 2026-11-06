@@ -16,7 +16,9 @@ jobs:
     env:
       ADDON_TOKEN: ${{ secrets.ADDON_TOKEN }}
       FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
-      MAX_SOURCE_PAGES: "100"
+      MAX_SOURCE_PAGES: "12"
+      MAX_ITEMS: "100"
+      FIRECRAWL_MIN_INTERVAL_MS: "6500"
       RUGBY24_BASE_URL: "https://rugby24.net/"
       STATIC_VERSION: "0.1.${{ github.run_number }}"
     steps:
