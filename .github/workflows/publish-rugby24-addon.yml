@@ -1,0 +1,42 @@
+name: Refresh Rugby24 static Nuvio add-on
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      ADDON_TOKEN: ${{ secrets.ADDON_TOKEN }}
+      MAX_SOURCE_PAGES: "20"
+      RUGBY24_BASE_URL: "https://rugby24.net/"
+      STATIC_VERSION: "0.1.${{ github.run_number }}"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate static add-on files
+        run: node static/build-static.mjs
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: static/dist
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
