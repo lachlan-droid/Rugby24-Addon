@@ -10,6 +10,7 @@ const USER_AGENT = process.env.USER_AGENT || "Mozilla/5.0 (Macintosh; Intel Mac 
 const VERSION = process.env.STATIC_VERSION || `0.1.${Math.floor(Date.now() / 1000)}`;
 const TOKEN = (process.env.ADDON_TOKEN || "").trim();
 const DIST = join(process.cwd(), "static", "dist");
+const STREAM_CONCURRENCY = Math.max(Number(process.env.STREAM_CONCURRENCY || 3), 1);
 
 const catalogs = [
   { id: "rugby24-latest", name: "Latest rugby replays", test: () => true },
@@ -95,31 +96,35 @@ function fetchWithBrowser(url) {
   });
 }
 
-function fetchViaFirecrawl(url) {
+async function fetchViaFirecrawl(url) {
   const apiKey = (process.env.FIRECRAWL_API_KEY || "")
     .replace(/^FIRECRAWL_API_KEY=/i, "")
     .trim();
-  return new Promise((resolve, reject) => {
-    const child = spawn("npx", [
-      "-y", "firecrawl-cli@1.19.6", "scrape",
-      "--format", "rawHtml",
-      "--max-age", "0",
-      url.href,
-    ], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FIRECRAWL_API_KEY: apiKey },
-    });
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on("data", (chunk) => stdout.push(chunk));
-    child.stderr.on("data", (chunk) => stderr.push(chunk));
-    child.on("error", reject);
-    child.on("close", (code) => {
-      const body = Buffer.concat(stdout).toString("utf8").replace(/^Scrape ID:\s*[^\n]+\n/i, "");
-      if (code === 0 && body.length > 500) return resolve(body);
-      reject(new Error(`Firecrawl scrape returned ${code}: ${Buffer.concat(stderr).toString("utf8").trim()}`));
-    });
+  const apiUrl = (process.env.FIRECRAWL_API_URL || "https://api.firecrawl.dev/v2").replace(/\/$/, "");
+  if (!apiKey) throw new Error("FIRECRAWL_API_KEY is not configured");
+
+  const response = await fetch(`${apiUrl}/scrape`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      url: url.href,
+      formats: ["rawHtml"],
+      onlyMainContent: false,
+      maxAge: 0,
+      storeInCache: false,
+      parsers: [],
+    }),
   });
+  const payload = await response.json().catch(() => ({}));
+  const body = payload?.data?.rawHtml;
+  if (!response.ok || !payload?.success || typeof body !== "string" || body.length <= 500) {
+    const detail = payload?.error || payload?.data?.metadata?.error || `HTTP ${response.status}`;
+    throw new Error(`Firecrawl scrape failed: ${detail}`);
+  }
+  return body;
 }
 
 function looksLikeListing(body) {
@@ -251,25 +256,32 @@ for (const catalog of catalogs) {
   await writeJson(`catalog/movie/${catalog.id}.json`, { metas: selected });
 }
 
-for (const item of items) {
-  const id = idFor(item);
-  const streams = await streamFor(item);
-  const releaseInfo = item.publishedAt.toISOString().slice(0, 10);
-  await writeJson(`meta/movie/${id}.json`, {
-    meta: {
-      id,
-      type: "movie",
-      name: item.title,
-      poster: item.poster || undefined,
-      description: `Authorized Rugby24 replay published ${releaseInfo}.`,
-      releaseInfo,
-      genres: ["Rugby"],
-      links: [{ name: "Original source page", category: "movie", url: item.url }],
-    },
-  });
-  await writeJson(`stream/movie/${id}.json`, {
-    streams,
-  });
+for (let start = 0; start < items.length; start += STREAM_CONCURRENCY) {
+  const batch = items.slice(start, start + STREAM_CONCURRENCY);
+  const resolved = await Promise.all(batch.map(async (item) => ({
+    item,
+    streams: await streamFor(item),
+  })));
+  for (const { item, streams } of resolved) {
+    const id = idFor(item);
+    const releaseInfo = item.publishedAt.toISOString().slice(0, 10);
+    await writeJson(`meta/movie/${id}.json`, {
+      meta: {
+        id,
+        type: "movie",
+        name: item.title,
+        poster: item.poster || undefined,
+        description: `Authorized Rugby24 replay published ${releaseInfo}.`,
+        releaseInfo,
+        genres: ["Rugby"],
+        links: [{ name: "Original source page", category: "movie", url: item.url }],
+      },
+    });
+    await writeJson(`stream/movie/${id}.json`, {
+      streams,
+    });
+  }
+  console.log(`Resolved streams ${Math.min(start + batch.length, items.length)}/${items.length}`);
 }
 
 await writeJson("manifest.json", {
