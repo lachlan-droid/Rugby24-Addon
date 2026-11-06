@@ -21,6 +21,7 @@ jobs:
       MAX_SOURCE_PAGES: "12"
       MAX_ITEMS: "100"
       FIRECRAWL_MIN_INTERVAL_MS: "6500"
+      EMBED_RESOLVE_LIMIT: "25"
       RUGBY24_BASE_URL: "https://rugby24.net/"
       STATIC_VERSION: "0.1.${{ github.run_number }}"
     steps:
