@@ -18,6 +18,7 @@ const EMBED_RESOLVE_LIMIT = Math.max(Number(process.env.EMBED_RESOLVE_LIMIT || 2
 const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
   "https://sports-replay.michaelrobgrove.workers.dev/stremio/247c929c3684fde3bce7f081eeaf04b5e2d72efbf80e6fe9/manifest.json";
 const METADATA_SCOPE = "sports-metadata";
+const CATALOG_SCOPE = "sports-catalog";
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
 const SKIP_LIVE_SOURCE = process.env.SKIP_LIVE_SOURCE === "true";
@@ -432,6 +433,7 @@ async function buildSportsMetadataOverlay(rugbyItems) {
     if (metas.length) {
       availableCatalogs.push([id, name]);
       await writeScopedJson(METADATA_SCOPE, `catalog/movie/sports-replay-${id}.json`, { metas });
+      await writeScopedJson(CATALOG_SCOPE, `catalog/movie/sports-replay-${id}.json`, { metas });
     }
   }
 
@@ -444,6 +446,16 @@ async function buildSportsMetadataOverlay(rugbyItems) {
       { name: "catalog", types: ["movie"] },
       { name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] },
     ],
+    types: ["movie"],
+    catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
+    behaviorHints: { configurable: false, adult: false, p2p: false },
+  });
+  await writeScopedJson(CATALOG_SCOPE, "manifest.json", {
+    id: "private.rugby24.sports-replay.catalogs",
+    version: VERSION,
+    name: "Rugby Competition Catalogs",
+    description: "Competition rows for Rugby24 replays, with Rugby24 artwork and dates; streams remain provided by the Sports Replay add-on.",
+    resources: [{ name: "catalog", types: ["movie"] }],
     types: ["movie"],
     catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
     behaviorHints: { configurable: false, adult: false, p2p: false },
