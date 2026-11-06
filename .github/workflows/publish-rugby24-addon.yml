@@ -1,6 +1,8 @@
 name: Refresh Rugby24 static Nuvio add-on
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "17 */6 * * *"
