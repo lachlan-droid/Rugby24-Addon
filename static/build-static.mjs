@@ -96,13 +96,19 @@ function fetchWithBrowser(url) {
 }
 
 function fetchViaFirecrawl(url) {
+  const apiKey = (process.env.FIRECRAWL_API_KEY || "")
+    .replace(/^FIRECRAWL_API_KEY=/i, "")
+    .trim();
   return new Promise((resolve, reject) => {
     const child = spawn("npx", [
       "-y", "firecrawl-cli@1.19.6", "scrape",
       "--format", "rawHtml",
       "--max-age", "0",
       url.href,
-    ], { stdio: ["ignore", "pipe", "pipe"] });
+    ], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, FIRECRAWL_API_KEY: apiKey },
+    });
     const stdout = [];
     const stderr = [];
     child.stdout.on("data", (chunk) => stdout.push(chunk));
