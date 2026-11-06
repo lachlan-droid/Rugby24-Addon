@@ -18,6 +18,7 @@ jobs:
     env:
       ADDON_TOKEN: ${{ secrets.ADDON_TOKEN }}
       FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+      SKIP_LIVE_SOURCE: "true"
       MAX_SOURCE_PAGES: "12"
       MAX_ITEMS: "100"
       FIRECRAWL_MIN_INTERVAL_MS: "6500"
