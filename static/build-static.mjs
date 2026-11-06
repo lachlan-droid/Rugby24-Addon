@@ -20,6 +20,7 @@ const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
 const METADATA_SCOPE = "sports-metadata";
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
+const SKIP_LIVE_SOURCE = process.env.SKIP_LIVE_SOURCE === "true";
 const SECTION_PATHS = [
   "premiership-rugby",
   "top14",
@@ -505,7 +506,7 @@ const all = new Map();
 const queue = [SOURCE, ...SECTION_PATHS.map((path) => new URL(path, SOURCE))];
 const queued = new Set(queue.map((url) => url.href));
 const visited = new Set();
-while (queue.length && visited.size < PAGE_COUNT) {
+while (!SKIP_LIVE_SOURCE && queue.length && visited.size < PAGE_COUNT) {
   const sourcePage = queue.shift();
   visited.add(sourcePage.href);
   let fetched;
