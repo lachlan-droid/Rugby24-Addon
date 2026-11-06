@@ -398,6 +398,7 @@ async function buildSportsMetadataOverlay(rugbyItems) {
       id: sourceItem.id,
       type: "movie",
       name: title,
+      posterShape: "landscape",
       poster,
       background: poster,
       description: `${title}. Full-match replay published ${date}.`,
