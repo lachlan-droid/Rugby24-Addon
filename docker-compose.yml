@@ -1,0 +1,9 @@
+services:
+  rugby24-nuvio-addon:
+    build: .
+    container_name: rugby24-nuvio-addon
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "7000:7000"
