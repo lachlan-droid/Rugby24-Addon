@@ -95,6 +95,27 @@ function fetchWithBrowser(url) {
   });
 }
 
+function fetchViaFirecrawl(url) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("npx", [
+      "-y", "firecrawl-cli@1.19.6", "scrape",
+      "--format", "rawHtml",
+      "--max-age", "0",
+      url.href,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const body = Buffer.concat(stdout).toString("utf8").replace(/^Scrape ID:\s*[^\n]+\n/i, "");
+      if (code === 0 && body.length > 500) return resolve(body);
+      reject(new Error(`Firecrawl scrape returned ${code}: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+  });
+}
+
 function looksLikeListing(body) {
   return /full\s+match|match\s+replay|highlights?|replay/i.test(body) &&
     /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b/i.test(body);
@@ -117,6 +138,14 @@ async function fetchPage(url, { requireListing = false, richMedia = false } = {}
       if (usable) return { format: "html", body };
       throw new Error("browser response did not contain a usable Rugby24 page");
     } catch (browserError) {
+      if (process.env.FIRECRAWL_API_KEY && richMedia) {
+        console.warn(`Browser fetch failed for ${url.href}; using Firecrawl media fallback: ${browserError.message}`);
+        try {
+          return { format: "html", body: await fetchViaFirecrawl(url) };
+        } catch (firecrawlError) {
+          console.warn(`Firecrawl fetch failed for ${url.href}; using Jina Reader fallback: ${firecrawlError.message}`);
+        }
+      }
       console.warn(`Browser fetch failed for ${url.href}; using Jina Reader fallback: ${browserError.message}`);
       return { format: "markdown", body: await fetchViaJina(url, { richMedia }) };
     }
