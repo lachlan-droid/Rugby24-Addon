@@ -130,6 +130,7 @@ export function parseListingMarkdown(markdown, baseUrl) {
   for (const match of markdown.matchAll(linkRe)) {
     const title = decodeHtml(match[1]).replace(/[*_`]/g, "").trim();
     const url = absoluteUrl(match[2], baseUrl);
+    if (/\.(?:jpe?g|png|webp|gif|avif)(?:\?|$)/i.test(url)) continue;
     if (!url || !ARTICLE_HINT.test(title)) continue;
     const date = parsePublishedDate(title);
     if (!date) continue;
