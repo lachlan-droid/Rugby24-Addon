@@ -423,12 +423,14 @@ async function buildSportsMetadataOverlay(rugbyItems) {
     ["womens-rugby", "Women's Rugby"],
     ["rugby-union", "Rugby Union"],
   ];
+  const availableCatalogs = [];
   for (const [id, name] of catalogDefinitions) {
     const metas = entries
       .filter((entry) => entry.category === name)
       .sort((a, b) => String(b.meta.releaseInfo || "").localeCompare(String(a.meta.releaseInfo || "")))
       .map((entry) => entry.meta);
     if (metas.length) {
+      availableCatalogs.push([id, name]);
       await writeScopedJson(METADATA_SCOPE, `catalog/movie/sports-replay-${id}.json`, { metas });
     }
   }
@@ -443,7 +445,7 @@ async function buildSportsMetadataOverlay(rugbyItems) {
       { name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] },
     ],
     types: ["movie"],
-    catalogs: catalogDefinitions.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
+    catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
     behaviorHints: { configurable: false, adult: false, p2p: false },
   });
   console.log(`Built metadata overlay for ${sourceItems.length} Sports Replay items; matched ${usedReplays.size} Rugby24 pages`);
