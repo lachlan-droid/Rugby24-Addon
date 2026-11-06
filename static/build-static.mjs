@@ -306,6 +306,7 @@ function cleanMetadataTitle(title) {
   return String(title || "")
     .replace(/\s*-\s*Full Match Replay\s*/i, " — ")
     .replace(/\s+-\s+/g, " — ")
+    .replace(/\s*—\s*—\s*/g, " — ")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
