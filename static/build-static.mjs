@@ -18,6 +18,8 @@ const EMBED_RESOLVE_LIMIT = Math.max(Number(process.env.EMBED_RESOLVE_LIMIT || 2
 const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
   "https://sports-replay.michaelrobgrove.workers.dev/stremio/247c929c3684fde3bce7f081eeaf04b5e2d72efbf80e6fe9/manifest.json";
 const METADATA_SCOPE = "sports-metadata";
+const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
+  `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
 const SECTION_PATHS = [
   "premiership-rugby",
   "top14",
@@ -260,6 +262,45 @@ async function fetchJson(url) {
   return response.json();
 }
 
+async function restorePublishedStaticFiles() {
+  const manifest = await fetchJson(new URL("manifest.json", PUBLISHED_FALLBACK_BASE).href);
+  await writeJson("manifest.json", manifest);
+  const metas = [];
+  const catalogsToRestore = Array.isArray(manifest.catalogs) ? manifest.catalogs : [];
+  for (const catalog of catalogsToRestore) {
+    const relativePath = `catalog/movie/${catalog.id}.json`;
+    try {
+      const catalogData = await fetchJson(new URL(relativePath, PUBLISHED_FALLBACK_BASE).href);
+      await writeJson(relativePath, catalogData);
+      if (Array.isArray(catalogData?.metas)) metas.push(...catalogData.metas);
+    } catch (error) {
+      console.warn(`Could not restore fallback catalog ${catalog.id}: ${error.message}`);
+    }
+  }
+
+  const uniqueMetas = [...new Map(metas.map((meta) => [meta.id, meta])).values()];
+  for (const meta of uniqueMetas) {
+    for (const resource of ["meta", "stream"]) {
+      const relativePath = `${resource}/movie/${encodeURIComponent(meta.id)}.json`;
+      try {
+        const value = await fetchJson(new URL(relativePath, PUBLISHED_FALLBACK_BASE).href);
+        await writeJson(relativePath, value);
+      } catch (error) {
+        console.warn(`Could not restore fallback ${resource} for ${meta.id}: ${error.message}`);
+      }
+    }
+  }
+
+  return uniqueMetas
+    .filter((meta) => meta?.name && meta?.releaseInfo)
+    .map((meta) => ({
+      title: meta.name,
+      poster: meta.poster,
+      publishedAt: new Date(meta.releaseInfo),
+      url: `fallback:${meta.id}`,
+    }));
+}
+
 function sourceTeamPair(title) {
   const prefix = String(title || "")
     .replace(/\b(?:french\s+top\s*14|united\s+championship|gallagher\s+premiership|league\s+world\s+cup|hilux\s+npc|european\s+(?:champions|challenge)\s+cup|super\s+rugby|bledisloe\s+cup|download|full\s+match).*/i, "")
@@ -472,6 +513,7 @@ while (queue.length && visited.size < PAGE_COUNT) {
     fetched = await fetchListing(sourcePage);
   } catch (error) {
     console.warn(`Could not fetch listing page ${sourcePage.href}; skipping: ${error.message}`);
+    if (/402|credit|quota|balance|payment required/i.test(error.message)) break;
     continue;
   }
   const entries = fetched.format === "html"
@@ -498,7 +540,14 @@ while (queue.length && visited.size < PAGE_COUNT) {
 
 const items = [...all.values()].sort((a, b) => b.publishedAt - a.publishedAt || a.title.localeCompare(b.title));
 if (!items.length) {
-  throw new Error("No Rugby24 replay entries were parsed; refusing to publish an empty catalog.");
+  console.warn("No Rugby24 pages were available; restoring the last published catalogue without Firecrawl.");
+  const fallbackItems = await restorePublishedStaticFiles();
+  if (!fallbackItems.length) {
+    throw new Error("No Rugby24 replay entries were available from the source or the published fallback.");
+  }
+  await buildSportsMetadataOverlay(fallbackItems);
+  console.log(`Restored ${fallbackItems.length} published Rugby24 entries and rebuilt the metadata overlay`);
+  process.exit(0);
 }
 const publishedItems = items.slice(0, MAX_ITEMS);
 console.log(`Publishing ${publishedItems.length} newest replays from ${items.length} discovered entries`);
