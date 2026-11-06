@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
-import { parseListing } from "../src/parser.js";
+import { parseListing, parseListingMarkdown } from "../src/parser.js";
 
 const SOURCE = new URL(process.env.RUGBY24_BASE_URL || "https://rugby24.net/");
 const PAGE_COUNT = Math.max(Number(process.env.MAX_SOURCE_PAGES || 20), 1);
@@ -51,6 +51,37 @@ function fetchWithCurl(url) {
   });
 }
 
+function fetchViaJina(url) {
+  const source = new URL(url);
+  const proxyUrl = `https://r.jina.ai/http://${source.host}${source.pathname}${source.search}`;
+  return new Promise((resolve, reject) => {
+    const child = spawn("curl", [
+      "--fail", "--silent", "--show-error", "--location", "--compressed",
+      "--connect-timeout", "20", "--max-time", "45",
+      "--user-agent", USER_AGENT,
+      proxyUrl,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) return resolve(Buffer.concat(stdout).toString("utf8"));
+      reject(new Error(`Jina proxy curl returned ${code}: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+  });
+}
+
+async function fetchListing(url) {
+  try {
+    return { format: "html", body: await fetchWithCurl(url) };
+  } catch (error) {
+    console.warn(`Direct source fetch failed for ${url.href}; using Jina Reader fallback: ${error.message}`);
+    return { format: "markdown", body: await fetchViaJina(url) };
+  }
+}
+
 function idFor(item) {
   return `rugby24-${createHash("sha256").update(item.url).digest("hex").slice(0, 16)}`;
 }
@@ -78,7 +109,10 @@ await mkdir(DIST, { recursive: true });
 
 const all = new Map();
 for (let page = 0; page < PAGE_COUNT; page += 1) {
-  const entries = parseListing(await fetchWithCurl(pageUrl(page)), SOURCE.href);
+  const fetched = await fetchListing(pageUrl(page));
+  const entries = fetched.format === "html"
+    ? parseListing(fetched.body, SOURCE.href)
+    : parseListingMarkdown(fetched.body, SOURCE.href);
   for (const entry of entries) all.set(entry.url, entry);
   console.log(`Fetched source page ${page + 1}/${PAGE_COUNT}; ${all.size} unique replays`);
 }
