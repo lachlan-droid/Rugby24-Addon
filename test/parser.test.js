@@ -31,3 +31,9 @@ test("extracts article poster, duration and explicit HLS URL without parsing the
   assert.equal(article.hlsUrl, "https://media.example/video.m3u8?x=1&y=2");
   assert.deepEqual(article.embeds, ["https://bysesukior.com/e/blocked"]);
 });
+
+test("decodes escaped HLS query separators from OK player metadata", () => {
+  const html = '<div data-options="{&quot;hlsManifestUrl&quot;:&quot;https://media.example/video.m3u8?cmd=play\\u0026expires=123&quot;}"></div>';
+  const article = parseArticle(html, "https://rugby24.net/example-full-match-replay-1-november-2026");
+  assert.equal(article.hlsUrl, "https://media.example/video.m3u8?cmd=play&expires=123");
+});
