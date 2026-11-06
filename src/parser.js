@@ -170,7 +170,7 @@ export function parseArticle(html, articleUrl) {
   }
 
   const decodedHtml = decodeHtml(html);
-  const hlsMatch = decodedHtml.match(/"hlsManifestUrl"\s*:\s*"(https?:\/\/[^"\\]+\.m3u8[^"\\]*)"/i) ??
+  const hlsMatch = decodedHtml.match(/"hlsManifestUrl"\s*:\s*"([^" ]*?\.m3u8[^" ]*)"/i) ??
     decodedHtml.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/i);
 
   return {
@@ -182,7 +182,7 @@ export function parseArticle(html, articleUrl) {
     description,
     durationSeconds: durationMatch ? Number(durationMatch[1]) : undefined,
     embeds,
-    hlsUrl: hlsMatch ? hlsMatch[1].replace(/\\u0026/g, "&amp;").replace(/&amp;/g, "&") : "",
+    hlsUrl: hlsMatch ? hlsMatch[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&") : "",
   };
 }
 
