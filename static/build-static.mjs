@@ -12,6 +12,11 @@ const TOKEN = (process.env.ADDON_TOKEN || "").trim();
 const DIST = join(process.cwd(), "static", "dist");
 const STREAM_CONCURRENCY = Math.max(Number(process.env.STREAM_CONCURRENCY || 6), 1);
 const FIRECRAWL_TIMEOUT_MS = Math.max(Number(process.env.FIRECRAWL_TIMEOUT_MS || 30000), 5000);
+const FIRECRAWL_MIN_INTERVAL_MS = Math.max(Number(process.env.FIRECRAWL_MIN_INTERVAL_MS || 6500), 0);
+const MAX_ITEMS = Math.max(Number(process.env.MAX_ITEMS || 100), 1);
+
+let firecrawlQueue = Promise.resolve();
+let firecrawlLastStartedAt = 0;
 
 const catalogs = [
   { id: "rugby24-latest", name: "Latest rugby replays", test: () => true },
@@ -104,36 +109,46 @@ async function fetchViaFirecrawl(url) {
   const apiUrl = (process.env.FIRECRAWL_API_URL || "https://api.firecrawl.dev/v2").replace(/\/$/, "");
   if (!apiKey) throw new Error("FIRECRAWL_API_KEY is not configured");
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FIRECRAWL_TIMEOUT_MS);
-  let response;
-  try {
-    response = await fetch(`${apiUrl}/scrape`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        url: url.href,
-        formats: ["rawHtml"],
-        onlyMainContent: false,
-        maxAge: 0,
-        storeInCache: false,
-        parsers: [],
-      }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-  const payload = await response.json().catch(() => ({}));
-  const body = payload?.data?.rawHtml;
-  if (!response.ok || !payload?.success || typeof body !== "string" || body.length <= 500) {
-    const detail = payload?.error || payload?.data?.metadata?.error || `HTTP ${response.status}`;
-    throw new Error(`Firecrawl scrape failed: ${detail}`);
-  }
-  return body;
+  const request = async () => {
+    const wait = FIRECRAWL_MIN_INTERVAL_MS - (Date.now() - firecrawlLastStartedAt);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    firecrawlLastStartedAt = Date.now();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FIRECRAWL_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetch(`${apiUrl}/scrape`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: url.href,
+          formats: ["rawHtml"],
+          onlyMainContent: false,
+          maxAge: 0,
+          storeInCache: false,
+          parsers: [],
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    const payload = await response.json().catch(() => ({}));
+    const body = payload?.data?.rawHtml;
+    if (!response.ok || !payload?.success || typeof body !== "string" || body.length <= 500) {
+      const detail = payload?.error || payload?.data?.metadata?.error || `HTTP ${response.status}`;
+      throw new Error(`Firecrawl scrape failed: ${detail}`);
+    }
+    return body;
+  };
+
+  const result = firecrawlQueue.then(request, request);
+  firecrawlQueue = result.catch(() => undefined);
+  return result;
 }
 
 function looksLikeListing(body) {
@@ -152,13 +167,21 @@ async function fetchPage(url, { requireListing = false, richMedia = false } = {}
     throw new Error("direct response did not contain a usable Rugby24 page");
   } catch (error) {
     console.warn(`Direct source fetch failed for ${url.href}; trying browser fallback: ${error.message}`);
+    if (process.env.FIRECRAWL_API_KEY && (requireListing || richMedia)) {
+      console.warn(`Using Firecrawl fallback for ${url.href}: ${error.message}`);
+      try {
+        return { format: "html", body: await fetchViaFirecrawl(url) };
+      } catch (firecrawlError) {
+        console.warn(`Firecrawl fetch failed for ${url.href}; trying browser fallback: ${firecrawlError.message}`);
+      }
+    }
     try {
       const body = await fetchWithBrowser(url);
       const usable = requireListing ? looksLikeListing(body) : (!richMedia || looksLikeListing(body) || looksLikePlayer(body));
       if (usable) return { format: "html", body };
       throw new Error("browser response did not contain a usable Rugby24 page");
     } catch (browserError) {
-      if (process.env.FIRECRAWL_API_KEY && richMedia) {
+      if (process.env.FIRECRAWL_API_KEY && richMedia && !requireListing) {
         console.warn(`Browser fetch failed for ${url.href}; using Firecrawl media fallback: ${browserError.message}`);
         try {
           return { format: "html", body: await fetchViaFirecrawl(url) };
@@ -283,13 +306,15 @@ const items = [...all.values()].sort((a, b) => b.publishedAt - a.publishedAt || 
 if (!items.length) {
   throw new Error("No Rugby24 replay entries were parsed; refusing to publish an empty catalog.");
 }
+const publishedItems = items.slice(0, MAX_ITEMS);
+console.log(`Publishing ${publishedItems.length} newest replays from ${items.length} discovered entries`);
 for (const catalog of catalogs) {
-  const selected = items.filter(catalog.test).map((item) => preview(item, catalog.name));
+  const selected = publishedItems.filter(catalog.test).map((item) => preview(item, catalog.name));
   await writeJson(`catalog/movie/${catalog.id}.json`, { metas: selected });
 }
 
-for (let start = 0; start < items.length; start += STREAM_CONCURRENCY) {
-  const batch = items.slice(start, start + STREAM_CONCURRENCY);
+for (let start = 0; start < publishedItems.length; start += STREAM_CONCURRENCY) {
+  const batch = publishedItems.slice(start, start + STREAM_CONCURRENCY);
   const resolved = await Promise.all(batch.map(async (item) => ({
     item,
     streams: await streamFor(item),
@@ -313,7 +338,7 @@ for (let start = 0; start < items.length; start += STREAM_CONCURRENCY) {
       streams,
     });
   }
-  console.log(`Resolved streams ${Math.min(start + batch.length, items.length)}/${items.length}`);
+  console.log(`Resolved streams ${Math.min(start + batch.length, publishedItems.length)}/${publishedItems.length}`);
 }
 
 await writeJson("manifest.json", {
@@ -327,4 +352,4 @@ await writeJson("manifest.json", {
   behaviorHints: { configurable: false, adult: false, p2p: false },
 });
 
-console.log(`Built ${items.length} replays at ${join(DIST, TOKEN || "<root>")}`);
+console.log(`Built ${publishedItems.length} replays at ${join(DIST, TOKEN || "<root>")}`);
