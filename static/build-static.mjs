@@ -116,7 +116,13 @@ async function fetchViaFirecrawl(url, { cacheBust = false } = {}) {
     firecrawlLastStartedAt = Date.now();
 
     const requestUrl = new URL(url);
-    if (cacheBust) requestUrl.searchParams.set("r24cb", `${VERSION}-${Date.now()}`);
+    if (cacheBust) {
+      const originalSearch = requestUrl.search;
+      const cacheBustValue = encodeURIComponent(`${VERSION}-${Date.now()}`);
+      requestUrl.search = originalSearch
+        ? `?r24cb=${cacheBustValue}&${originalSearch.slice(1)}`
+        : `?r24cb=${cacheBustValue}`;
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FIRECRAWL_TIMEOUT_MS);
