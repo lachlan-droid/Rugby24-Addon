@@ -14,6 +14,7 @@ const STREAM_CONCURRENCY = Math.max(Number(process.env.STREAM_CONCURRENCY || 6),
 const FIRECRAWL_TIMEOUT_MS = Math.max(Number(process.env.FIRECRAWL_TIMEOUT_MS || 30000), 5000);
 const FIRECRAWL_MIN_INTERVAL_MS = Math.max(Number(process.env.FIRECRAWL_MIN_INTERVAL_MS || 6500), 0);
 const MAX_ITEMS = Math.max(Number(process.env.MAX_ITEMS || 100), 1);
+const EMBED_RESOLVE_LIMIT = Math.max(Number(process.env.EMBED_RESOLVE_LIMIT || 25), 0);
 
 let firecrawlQueue = Promise.resolve();
 let firecrawlLastStartedAt = 0;
@@ -221,7 +222,7 @@ async function writeJson(relativePath, value) {
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-async function streamFor(item) {
+async function streamFor(item, { resolveEmbeds = true } = {}) {
   try {
     const fetched = await fetchPage(new URL(item.url), { richMedia: true });
     const article = parseArticle(fetched.body, item.url);
@@ -236,18 +237,20 @@ async function streamFor(item) {
     }
     if (article.embeds.length) {
       for (const embed of article.embeds) {
-        try {
-          const player = parseArticle((await fetchPage(new URL(embed), { richMedia: true })).body, item.url);
-          if (player.hlsUrl) {
-            streams.push({
-              name: "Direct HLS stream",
-              description: "Direct stream URL extracted from the embedded source player.",
-              url: player.hlsUrl,
-              behaviorHints: { notWebReady: false },
-            });
+        if (resolveEmbeds) {
+          try {
+            const player = parseArticle((await fetchPage(new URL(embed), { richMedia: true })).body, item.url);
+            if (player.hlsUrl) {
+              streams.push({
+                name: "Direct HLS stream",
+                description: "Direct stream URL extracted from the embedded source player.",
+                url: player.hlsUrl,
+                behaviorHints: { notWebReady: false },
+              });
+            }
+          } catch (embedError) {
+            console.warn(`Could not inspect embedded player ${embed}: ${embedError.message}`);
           }
-        } catch (embedError) {
-          console.warn(`Could not inspect embedded player ${embed}: ${embedError.message}`);
         }
 
         streams.push({
@@ -315,9 +318,9 @@ for (const catalog of catalogs) {
 
 for (let start = 0; start < publishedItems.length; start += STREAM_CONCURRENCY) {
   const batch = publishedItems.slice(start, start + STREAM_CONCURRENCY);
-  const resolved = await Promise.all(batch.map(async (item) => ({
+  const resolved = await Promise.all(batch.map(async (item, index) => ({
     item,
-    streams: await streamFor(item),
+    streams: await streamFor(item, { resolveEmbeds: start + index < EMBED_RESOLVE_LIMIT }),
   })));
   for (const { item, streams } of resolved) {
     const id = idFor(item);
