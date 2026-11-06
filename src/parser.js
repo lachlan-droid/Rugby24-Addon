@@ -114,6 +114,39 @@ export function parseListing(html, baseUrl) {
   return entries.sort((a, b) => b.publishedAt - a.publishedAt || a.title.localeCompare(b.title));
 }
 
+export function parseListingMarkdown(markdown, baseUrl) {
+  const entries = new Map();
+  const posterByUrl = new Map();
+  const imageRe = /\[!\[[^\]]*\]\(([^)]+)\)\]\((https?:\/\/[^)\s]+)\)/gi;
+  for (const match of markdown.matchAll(imageRe)) {
+    try {
+      posterByUrl.set(match[2], new URL(match[1], baseUrl).href);
+    } catch {
+      // Ignore malformed image URLs from the proxy response.
+    }
+  }
+
+  const linkRe = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi;
+  for (const match of markdown.matchAll(linkRe)) {
+    const title = decodeHtml(match[1]).replace(/[*_`]/g, "").trim();
+    const url = absoluteUrl(match[2], baseUrl);
+    if (!url || !ARTICLE_HINT.test(title)) continue;
+    const date = parsePublishedDate(title);
+    if (!date) continue;
+    const existing = entries.get(url);
+    if (!existing || title.length > existing.title.length) {
+      entries.set(url, {
+        url,
+        title,
+        publishedAt: date,
+        poster: posterByUrl.get(url) || existing?.poster || "",
+      });
+    }
+  }
+
+  return [...entries.values()].sort((a, b) => b.publishedAt - a.publishedAt || a.title.localeCompare(b.title));
+}
+
 export function parseArticle(html, articleUrl) {
   const heading = html.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/i)?.[0] ?? "";
   const title = stripTags(heading) || stripTags(html.match(/<title\b[^>]*>[\s\S]*?<\/title>/i)?.[0] ?? "")
