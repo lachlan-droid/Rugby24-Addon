@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseArticle, parseListing, parsePublishedDate } from "../src/parser.js";
+import { parseArticle, parseListing, parsePagination, parsePublishedDate } from "../src/parser.js";
 
 test("parses dates in the site's published-title format", () => {
   assert.equal(parsePublishedDate("Pau v Toulouse - 1 November 2026")?.toISOString(), "2026-11-01T00:00:00.000Z");
@@ -36,4 +36,24 @@ test("decodes escaped HLS query separators from OK player metadata", () => {
   const html = '<div data-options="{&quot;hlsManifestUrl&quot;:&quot;https://media.example/video.m3u8?cmd=play\\u0026expires=123&quot;}"></div>';
   const article = parseArticle(html, "https://rugby24.net/example-full-match-replay-1-november-2026");
   assert.equal(article.hlsUrl, "https://media.example/video.m3u8?cmd=play&expires=123");
+});
+
+test("extracts both current Rugby24 player hosts from iframe attributes and escaped markup", () => {
+  const html = `
+    <iframe src="https://ok.ru/videoembed/16319344282324"></iframe>
+    <div data-embed="https:\\/\\/bysesukior.com\\/e\\/r4a8kfi21spx"></div>`;
+  const article = parseArticle(html, "https://rugby24.net/example-full-match-replay-1-november-2026");
+  assert.deepEqual(article.embeds, [
+    "https://ok.ru/videoembed/16319344282324",
+    "https://bysesukior.com/e/r4a8kfi21spx",
+  ]);
+});
+
+test("extracts numeric Rugby24 pagination links", () => {
+  const html = '<a href="/?page2=">2</a><a href="/?page3=">3</a><a href="/?page555=">555</a>';
+  assert.deepEqual(parsePagination(html, "https://rugby24.net/"), [
+    { label: 2, url: "https://rugby24.net/?page2=" },
+    { label: 3, url: "https://rugby24.net/?page3=" },
+    { label: 555, url: "https://rugby24.net/?page555=" },
+  ]);
 });
