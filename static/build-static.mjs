@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
-import { parseListing, parseListingMarkdown } from "../src/parser.js";
+import { parseArticle, parseListing, parseListingMarkdown } from "../src/parser.js";
 
 const SOURCE = new URL(process.env.RUGBY24_BASE_URL || "https://rugby24.net/");
 const PAGE_COUNT = Math.max(Number(process.env.MAX_SOURCE_PAGES || 20), 1);
@@ -59,6 +59,9 @@ function fetchViaJina(url) {
       "--fail", "--silent", "--show-error", "--location", "--compressed",
       "--connect-timeout", "20", "--max-time", "45",
       "--user-agent", USER_AGENT,
+      "--header", "X-Respond-With: html",
+      "--header", "X-Retain-Media: html",
+      "--header", "X-With-Iframe: true",
       proxyUrl,
     ], { stdio: ["ignore", "pipe", "pipe"] });
     const stdout = [];
@@ -77,8 +80,8 @@ async function fetchListing(url) {
   try {
     return { format: "html", body: await fetchWithCurl(url) };
   } catch (error) {
-    console.warn(`Direct source fetch failed for ${url.href}; using Jina Reader fallback: ${error.message}`);
-    return { format: "markdown", body: await fetchViaJina(url) };
+    console.warn(`Direct source fetch failed for ${url.href}; using Jina Reader HTML fallback: ${error.message}`);
+    return { format: "html", body: await fetchViaJina(url) };
   }
 }
 
@@ -104,6 +107,36 @@ async function writeJson(relativePath, value) {
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+async function streamFor(item) {
+  try {
+    const fetched = await fetchListing(new URL(item.url));
+    const article = parseArticle(fetched.body, item.url);
+    if (article.hlsUrl) {
+      return {
+        name: "Direct HLS stream",
+        description: "Direct stream URL extracted from the authorized source player.",
+        url: article.hlsUrl,
+        behaviorHints: { notWebReady: false },
+      };
+    }
+    if (article.embeds.length) {
+      return {
+        name: "Open embedded player",
+        description: "The source exposes an embedded player but not a stable direct media URL.",
+        externalUrl: article.embeds[0],
+      };
+    }
+  } catch (error) {
+    console.warn(`Could not resolve a direct stream for ${item.url}: ${error.message}`);
+  }
+
+  return {
+    name: "Open source page",
+    description: "Open the original Rugby24 page and use its embedded player.",
+    externalUrl: item.url,
+  };
+}
+
 await rm(DIST, { recursive: true, force: true });
 await mkdir(DIST, { recursive: true });
 
@@ -125,6 +158,7 @@ for (const catalog of catalogs) {
 
 for (const item of items) {
   const id = idFor(item);
+  const stream = await streamFor(item);
   const releaseInfo = item.publishedAt.toISOString().slice(0, 10);
   await writeJson(`meta/movie/${id}.json`, {
     meta: {
@@ -139,11 +173,7 @@ for (const item of items) {
     },
   });
   await writeJson(`stream/movie/${id}.json`, {
-    streams: [{
-      name: "Open source page",
-      description: "Open the original Rugby24 page and use its embedded player.",
-      externalUrl: item.url,
-    }],
+    streams: [stream],
   });
 }
 
