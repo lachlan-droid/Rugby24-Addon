@@ -15,6 +15,20 @@ const FIRECRAWL_TIMEOUT_MS = Math.max(Number(process.env.FIRECRAWL_TIMEOUT_MS ||
 const FIRECRAWL_MIN_INTERVAL_MS = Math.max(Number(process.env.FIRECRAWL_MIN_INTERVAL_MS || 6500), 0);
 const MAX_ITEMS = Math.max(Number(process.env.MAX_ITEMS || 100), 1);
 const EMBED_RESOLVE_LIMIT = Math.max(Number(process.env.EMBED_RESOLVE_LIMIT || 25), 0);
+const SECTION_PATHS = [
+  "premiership-rugby",
+  "top14",
+  "urc",
+  "rugby-internationals",
+  "champions-cup",
+  "challenge-cup",
+  "six-nations",
+  "super-rugby",
+  "rugby-league",
+  "nrl",
+  "super-league",
+  "rugby-league-internationals",
+];
 
 let firecrawlQueue = Promise.resolve();
 let firecrawlLastStartedAt = 0;
@@ -285,13 +299,19 @@ await rm(DIST, { recursive: true, force: true });
 await mkdir(DIST, { recursive: true });
 
 const all = new Map();
-const queue = [SOURCE];
-const queued = new Set([SOURCE.href]);
+const queue = [SOURCE, ...SECTION_PATHS.map((path) => new URL(path, SOURCE))];
+const queued = new Set(queue.map((url) => url.href));
 const visited = new Set();
 while (queue.length && visited.size < PAGE_COUNT) {
   const sourcePage = queue.shift();
   visited.add(sourcePage.href);
-  const fetched = await fetchListing(sourcePage);
+  let fetched;
+  try {
+    fetched = await fetchListing(sourcePage);
+  } catch (error) {
+    console.warn(`Could not fetch listing page ${sourcePage.href}; skipping: ${error.message}`);
+    continue;
+  }
   const entries = fetched.format === "html"
     ? parseListing(fetched.body, SOURCE.href)
     : parseListingMarkdown(fetched.body, SOURCE.href);
