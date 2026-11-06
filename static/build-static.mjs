@@ -15,6 +15,9 @@ const FIRECRAWL_TIMEOUT_MS = Math.max(Number(process.env.FIRECRAWL_TIMEOUT_MS ||
 const FIRECRAWL_MIN_INTERVAL_MS = Math.max(Number(process.env.FIRECRAWL_MIN_INTERVAL_MS || 6500), 0);
 const MAX_ITEMS = Math.max(Number(process.env.MAX_ITEMS || 100), 1);
 const EMBED_RESOLVE_LIMIT = Math.max(Number(process.env.EMBED_RESOLVE_LIMIT || 25), 0);
+const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
+  "https://sports-replay.michaelrobgrove.workers.dev/stremio/247c929c3684fde3bce7f081eeaf04b5e2d72efbf80e6fe9/manifest.json";
+const METADATA_SCOPE = "sports-metadata";
 const SECTION_PATHS = [
   "premiership-rugby",
   "top14",
@@ -245,6 +248,132 @@ async function writeJson(relativePath, value) {
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+async function writeScopedJson(scope, relativePath, value) {
+  await writeJson(`${scope}/${relativePath}`, value);
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+  return response.json();
+}
+
+function sourceTeamPair(title) {
+  const prefix = String(title || "")
+    .replace(/\b(?:french\s+top\s*14|united\s+championship|gallagher\s+premiership|league\s+world\s+cup|hilux\s+npc|european\s+(?:champions|challenge)\s+cup|super\s+rugby|bledisloe\s+cup|download|full\s+match).*/i, "")
+    .trim();
+  const match = prefix.match(/^(.+?)\s+v(?:s\.?)?\s+(.+)$/i);
+  return match ? [match[1], match[2]] : [];
+}
+
+function rugbyTeamPair(title) {
+  const first = String(title || "").split(/\s+-\s+/)[0].trim();
+  const match = first.match(/^(.+?)\s+v(?:s\.?)?\s+(.+)$/i);
+  return match ? [match[1], match[2]] : [];
+}
+
+function teamTokens(value) {
+  return new Set(String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token && !["the", "club", "rugby", "saints"].includes(token)));
+}
+
+function sideSimilarity(left, right) {
+  const a = teamTokens(left);
+  const b = teamTokens(right);
+  if (!a.size || !b.size) return 0;
+  const overlap = [...a].filter((token) => b.has(token)).length;
+  return overlap / Math.max(Math.min(a.size, b.size), 1);
+}
+
+function matchSimilarity(source, replay) {
+  const sourceTeams = sourceTeamPair(source.name);
+  const replayTeams = rugbyTeamPair(replay.title);
+  if (source.releaseInfo !== replay.publishedAt.toISOString().slice(0, 10)) return 0;
+  if (sourceTeams.length !== 2 || replayTeams.length !== 2) return 0;
+  const ordered = (sideSimilarity(sourceTeams[0], replayTeams[0]) + sideSimilarity(sourceTeams[1], replayTeams[1])) / 2;
+  const reversed = (sideSimilarity(sourceTeams[0], replayTeams[1]) + sideSimilarity(sourceTeams[1], replayTeams[0])) / 2;
+  return Math.max(ordered, reversed);
+}
+
+function cleanMetadataTitle(title) {
+  return String(title || "")
+    .replace(/\s*-\s*Full Match Replay\s*/i, " — ")
+    .replace(/\s+-\s+/g, " — ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function metadataTags(title) {
+  const value = String(title || "");
+  const tags = ["Rugby"];
+  if (/top\s*14/i.test(value)) tags.push("Top 14");
+  else if (/prem|gallagher/i.test(value)) tags.push("Premiership");
+  else if (/urc|united rugby/i.test(value)) tags.push("URC");
+  else if (/champions cup/i.test(value)) tags.push("Champions Cup");
+  else if (/challenge cup/i.test(value)) tags.push("Challenge Cup");
+  else if (/six nations/i.test(value)) tags.push("Six Nations");
+  else if (/super rugby/i.test(value)) tags.push("Super Rugby");
+  else if (/nrl|super league|league world cup/i.test(value)) tags.push("Rugby League");
+  else if (/wxv|women/i.test(value)) tags.push("Women's Rugby");
+  else tags.push("Rugby Union");
+  return tags;
+}
+
+async function buildSportsMetadataOverlay(rugbyItems) {
+  const catalogUrl = new URL("catalog/movie/rugby.json", SPORTS_REPLAY_MANIFEST).href;
+  const source = await fetchJson(catalogUrl);
+  const sourceItems = Array.isArray(source?.metas) ? source.metas : [];
+  const usedReplays = new Set();
+
+  for (const sourceItem of sourceItems) {
+    const candidates = rugbyItems
+      .filter((item) => !usedReplays.has(item.url))
+      .map((item) => ({ item, score: matchSimilarity(sourceItem, item) }))
+      .filter(({ score }) => score >= 0.5)
+      .sort((a, b) => b.score - a.score);
+    const matched = candidates[0]?.item;
+    if (matched) usedReplays.add(matched.url);
+
+    const date = sourceItem.releaseInfo || matched?.publishedAt.toISOString().slice(0, 10) || "";
+    const title = matched ? cleanMetadataTitle(matched.title) : cleanMetadataTitle(sourceItem.name);
+    const tags = metadataTags(matched?.title || sourceItem.name);
+    const poster = matched?.poster || sourceItem.poster;
+    const meta = {
+      id: sourceItem.id,
+      type: "movie",
+      name: title,
+      poster,
+      background: poster,
+      description: `${title}. Full-match replay published ${date}.`,
+      releaseInfo: date,
+      runtime: sourceItem.runtime || "2h",
+      genre: tags,
+      genres: tags,
+      behaviorHints: { defaultVideoId: sourceItem.id },
+    };
+    await writeScopedJson(METADATA_SCOPE, `meta/movie/${sourceItem.id}.json`, { meta });
+  }
+
+  await writeScopedJson(METADATA_SCOPE, "manifest.json", {
+    id: "private.rugby24.sports-replay.metadata",
+    version: VERSION,
+    name: "Rugby Replay Metadata",
+    description: "Clean rugby titles, competition tags, dates, descriptions, and Rugby24 artwork for the Sports Replay add-on.",
+    resources: [{ name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] }],
+    types: ["movie"],
+    catalogs: [],
+    behaviorHints: { configurable: false, adult: false, p2p: false },
+  });
+  console.log(`Built metadata overlay for ${sourceItems.length} Sports Replay items; matched ${usedReplays.size} Rugby24 pages`);
+}
+
 async function streamFor(item, { resolveEmbeds = true } = {}) {
   try {
     const fetched = await fetchPage(new URL(item.url), { richMedia: true });
@@ -371,6 +500,12 @@ for (let start = 0; start < publishedItems.length; start += STREAM_CONCURRENCY) 
     });
   }
   console.log(`Resolved streams ${Math.min(start + batch.length, publishedItems.length)}/${publishedItems.length}`);
+}
+
+try {
+  await buildSportsMetadataOverlay(publishedItems);
+} catch (error) {
+  console.warn(`Could not build Sports Replay metadata overlay: ${error.message}`);
 }
 
 await writeJson("manifest.json", {
