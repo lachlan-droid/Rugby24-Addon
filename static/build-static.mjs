@@ -313,18 +313,22 @@ function cleanMetadataTitle(title) {
 
 function metadataTags(title) {
   const value = String(title || "");
-  const tags = ["Rugby"];
-  if (/top\s*14/i.test(value)) tags.push("Top 14");
-  else if (/prem|gallagher/i.test(value)) tags.push("Premiership");
-  else if (/urc|united rugby/i.test(value)) tags.push("URC");
-  else if (/champions cup/i.test(value)) tags.push("Champions Cup");
-  else if (/challenge cup/i.test(value)) tags.push("Challenge Cup");
-  else if (/six nations/i.test(value)) tags.push("Six Nations");
-  else if (/super rugby/i.test(value)) tags.push("Super Rugby");
-  else if (/nrl|super league|league world cup/i.test(value)) tags.push("Rugby League");
-  else if (/wxv|women/i.test(value)) tags.push("Women's Rugby");
-  else tags.push("Rugby Union");
-  return tags;
+  return ["Rugby", metadataCategory(value)];
+}
+
+function metadataCategory(title) {
+  const value = String(title || "");
+  if (/top\s*14/i.test(value)) return "Top 14";
+  if (/prem|gallagher/i.test(value)) return "Premiership Rugby";
+  if (/urc|united rugby/i.test(value)) return "URC";
+  if (/champions cup/i.test(value)) return "Champions Cup";
+  if (/challenge cup/i.test(value)) return "Challenge Cup";
+  if (/six nations/i.test(value)) return "Six Nations";
+  if (/super rugby/i.test(value)) return "Super Rugby";
+  if (/nrl|super league|league world cup/i.test(value)) return "Rugby League";
+  if (/wxv|women/i.test(value)) return "Women's Rugby";
+  if (/international|test match|b[o\u00f8]ledisloe|rugby championship|world cup/i.test(value)) return "Internationals";
+  return "Rugby Union";
 }
 
 async function buildSportsMetadataOverlay(rugbyItems) {
@@ -332,6 +336,7 @@ async function buildSportsMetadataOverlay(rugbyItems) {
   const source = await fetchJson(catalogUrl);
   const sourceItems = Array.isArray(source?.metas) ? source.metas : [];
   const usedReplays = new Set();
+  const entries = [];
 
   for (const sourceItem of sourceItems) {
     const candidates = rugbyItems
@@ -359,7 +364,31 @@ async function buildSportsMetadataOverlay(rugbyItems) {
       genres: tags,
       behaviorHints: { defaultVideoId: sourceItem.id },
     };
+    entries.push({ sourceItem, meta, category: metadataCategory(matched?.title || sourceItem.name) });
     await writeScopedJson(METADATA_SCOPE, `meta/movie/${sourceItem.id}.json`, { meta });
+  }
+
+  const catalogDefinitions = [
+    ["top14", "Top 14"],
+    ["super-rugby", "Super Rugby"],
+    ["six-nations", "Six Nations"],
+    ["internationals", "Internationals"],
+    ["premiership", "Premiership Rugby"],
+    ["urc", "URC"],
+    ["champions-cup", "Champions Cup"],
+    ["challenge-cup", "Challenge Cup"],
+    ["rugby-league", "Rugby League"],
+    ["womens-rugby", "Women's Rugby"],
+    ["rugby-union", "Rugby Union"],
+  ];
+  for (const [id, name] of catalogDefinitions) {
+    const metas = entries
+      .filter((entry) => entry.category === name)
+      .sort((a, b) => String(b.meta.releaseInfo || "").localeCompare(String(a.meta.releaseInfo || "")))
+      .map((entry) => entry.meta);
+    if (metas.length) {
+      await writeScopedJson(METADATA_SCOPE, `catalog/movie/sports-replay-${id}.json`, { metas });
+    }
   }
 
   await writeScopedJson(METADATA_SCOPE, "manifest.json", {
@@ -367,9 +396,12 @@ async function buildSportsMetadataOverlay(rugbyItems) {
     version: VERSION,
     name: "Rugby Replay Metadata",
     description: "Clean rugby titles, competition tags, dates, descriptions, and Rugby24 artwork for the Sports Replay add-on.",
-    resources: [{ name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] }],
+    resources: [
+      { name: "catalog", types: ["movie"] },
+      { name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] },
+    ],
     types: ["movie"],
-    catalogs: [],
+    catalogs: catalogDefinitions.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
     behaviorHints: { configurable: false, adult: false, p2p: false },
   });
   console.log(`Built metadata overlay for ${sourceItems.length} Sports Replay items; matched ${usedReplays.size} Rugby24 pages`);
