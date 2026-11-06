@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
-import { parseArticle, parseListing, parseListingMarkdown } from "../src/parser.js";
+import { parseArticle, parseListing, parseListingMarkdown, parsePagination } from "../src/parser.js";
 
 const SOURCE = new URL(process.env.RUGBY24_BASE_URL || "https://rugby24.net/");
 const PAGE_COUNT = Math.max(Number(process.env.MAX_SOURCE_PAGES || 20), 1);
@@ -26,7 +26,7 @@ const catalogs = [
 
 function pageUrl(page) {
   const url = new URL(SOURCE);
-  if (page > 0) url.search = `?page${page + 1}`;
+  if (page > 0) url.search = `?page${page + 1}=`;
   return url;
 }
 
@@ -202,36 +202,39 @@ async function streamFor(item) {
   try {
     const fetched = await fetchPage(new URL(item.url), { richMedia: true });
     const article = parseArticle(fetched.body, item.url);
+    const streams = [];
     if (article.hlsUrl) {
-      return [{
+      streams.push({
         name: "Direct HLS stream",
         description: "Direct stream URL extracted from the authorized source player.",
         url: article.hlsUrl,
         behaviorHints: { notWebReady: false },
-      }];
+      });
     }
     if (article.embeds.length) {
       for (const embed of article.embeds) {
         try {
           const player = parseArticle((await fetchPage(new URL(embed), { richMedia: true })).body, item.url);
           if (player.hlsUrl) {
-            return [{
+            streams.push({
               name: "Direct HLS stream",
               description: "Direct stream URL extracted from the embedded source player.",
               url: player.hlsUrl,
               behaviorHints: { notWebReady: false },
-            }];
+            });
           }
         } catch (embedError) {
           console.warn(`Could not inspect embedded player ${embed}: ${embedError.message}`);
         }
+
+        streams.push({
+          name: "Open source player",
+          description: "Open the original embedded player when the signed HLS URL is unavailable or expired.",
+          externalUrl: embed,
+        });
       }
-      return [{
-        name: "Open embedded player",
-        description: "The source exposes an embedded player but not a stable direct media URL.",
-        externalUrl: article.embeds[0],
-      }];
     }
+    if (streams.length) return streams;
   } catch (error) {
     console.warn(`Could not resolve a direct stream for ${item.url}: ${error.message}`);
   }
@@ -247,13 +250,33 @@ await rm(DIST, { recursive: true, force: true });
 await mkdir(DIST, { recursive: true });
 
 const all = new Map();
-for (let page = 0; page < PAGE_COUNT; page += 1) {
-  const fetched = await fetchListing(pageUrl(page));
+const queue = [SOURCE];
+const queued = new Set([SOURCE.href]);
+const visited = new Set();
+while (queue.length && visited.size < PAGE_COUNT) {
+  const sourcePage = queue.shift();
+  visited.add(sourcePage.href);
+  const fetched = await fetchListing(sourcePage);
   const entries = fetched.format === "html"
     ? parseListing(fetched.body, SOURCE.href)
     : parseListingMarkdown(fetched.body, SOURCE.href);
   for (const entry of entries) all.set(entry.url, entry);
-  console.log(`Fetched source page ${page + 1}/${PAGE_COUNT}; ${all.size} unique replays`);
+  const pagination = fetched.format === "html" ? parsePagination(fetched.body, SOURCE.href) : [];
+  for (const link of pagination) {
+    if (!queued.has(link.url) && visited.size + queue.length < PAGE_COUNT) {
+      queued.add(link.url);
+      queue.push(new URL(link.url));
+    }
+  }
+  // Keep working if a proxy omits pagination markup on one page.
+  if (!pagination.length && visited.size < PAGE_COUNT) {
+    const fallback = pageUrl(visited.size);
+    if (!queued.has(fallback.href)) {
+      queued.add(fallback.href);
+      queue.push(fallback);
+    }
+  }
+  console.log(`Fetched source page ${visited.size}/${PAGE_COUNT}; ${all.size} unique replays`);
 }
 
 const items = [...all.values()].sort((a, b) => b.publishedAt - a.publishedAt || a.title.localeCompare(b.title));
