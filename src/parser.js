@@ -47,7 +47,15 @@ function decodeEmbeddedUrl(value = "") {
 }
 
 function isPlayerUrl(value = "") {
-  return /^(https?:\/\/)(?:www\.)?(?:ok\.ru|odnoklassniki\.ru|odkl\.ru|bysesukior\.com)\//i.test(value);
+  try {
+    const url = new URL(value);
+    if (!/^(?:www\.)?(?:ok\.ru|odnoklassniki\.ru|odkl\.ru)$/i.test(url.host)) {
+      return /^https?:\/\/(?:www\.)?bysesukior\.com\/e\//i.test(value);
+    }
+    return /^\/(?:videoembed|video)\//i.test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 function absoluteUrl(value, baseUrl) {
