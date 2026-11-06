@@ -41,12 +41,22 @@ test("decodes escaped HLS query separators from OK player metadata", () => {
 test("extracts both current Rugby24 player hosts from iframe attributes and escaped markup", () => {
   const html = `
     <iframe src="https://ok.ru/videoembed/16319344282324"></iframe>
+    <img src="https://ok.ru/favicon.ico">
     <div data-embed="https:\\/\\/bysesukior.com\\/e\\/r4a8kfi21spx"></div>`;
   const article = parseArticle(html, "https://rugby24.net/example-full-match-replay-1-november-2026");
   assert.deepEqual(article.embeds, [
     "https://ok.ru/videoembed/16319344282324",
     "https://bysesukior.com/e/r4a8kfi21spx",
   ]);
+});
+
+test("does not publish OK.ru player assets as stream fallbacks", () => {
+  const html = `
+    <iframe src="https://ok.ru/videoembed/16319344282324"></iframe>
+    <img src="https://ok.ru/favicon.svg">
+    <script>const asset = "https://ok.ru/res/i/logo_ok_32-r23.png";</script>`;
+  const article = parseArticle(html, "https://rugby24.net/example-full-match-replay-1-november-2026");
+  assert.deepEqual(article.embeds, ["https://ok.ru/videoembed/16319344282324"]);
 });
 
 test("extracts numeric Rugby24 pagination links", () => {
