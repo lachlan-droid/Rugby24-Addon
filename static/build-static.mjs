@@ -32,7 +32,7 @@ const catalogs = [
 
 function pageUrl(page) {
   const url = new URL(SOURCE);
-  if (page > 0) url.search = `?page${page + 1}=`;
+  if (page > 0) url.search = `?=&page${page + 1}=`;
   return url;
 }
 
