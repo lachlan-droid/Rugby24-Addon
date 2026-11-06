@@ -10,7 +10,8 @@ const USER_AGENT = process.env.USER_AGENT || "Mozilla/5.0 (Macintosh; Intel Mac 
 const VERSION = process.env.STATIC_VERSION || `0.1.${Math.floor(Date.now() / 1000)}`;
 const TOKEN = (process.env.ADDON_TOKEN || "").trim();
 const DIST = join(process.cwd(), "static", "dist");
-const STREAM_CONCURRENCY = Math.max(Number(process.env.STREAM_CONCURRENCY || 3), 1);
+const STREAM_CONCURRENCY = Math.max(Number(process.env.STREAM_CONCURRENCY || 6), 1);
+const FIRECRAWL_TIMEOUT_MS = Math.max(Number(process.env.FIRECRAWL_TIMEOUT_MS || 30000), 5000);
 
 const catalogs = [
   { id: "rugby24-latest", name: "Latest rugby replays", test: () => true },
@@ -103,21 +104,29 @@ async function fetchViaFirecrawl(url) {
   const apiUrl = (process.env.FIRECRAWL_API_URL || "https://api.firecrawl.dev/v2").replace(/\/$/, "");
   if (!apiKey) throw new Error("FIRECRAWL_API_KEY is not configured");
 
-  const response = await fetch(`${apiUrl}/scrape`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      url: url.href,
-      formats: ["rawHtml"],
-      onlyMainContent: false,
-      maxAge: 0,
-      storeInCache: false,
-      parsers: [],
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FIRECRAWL_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(`${apiUrl}/scrape`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url: url.href,
+        formats: ["rawHtml"],
+        onlyMainContent: false,
+        maxAge: 0,
+        storeInCache: false,
+        parsers: [],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   const payload = await response.json().catch(() => ({}));
   const body = payload?.data?.rawHtml;
   if (!response.ok || !payload?.success || typeof body !== "string" || body.length <= 500) {
