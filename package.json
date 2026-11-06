@@ -1,0 +1,15 @@
+{
+  "name": "rugby24-nuvio-addon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private Nuvio/Stremio catalog for an authorized Rugby24 archive.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "build:static": "node static/build-static.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
