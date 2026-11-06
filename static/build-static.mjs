@@ -103,7 +103,7 @@ function fetchWithBrowser(url) {
   });
 }
 
-async function fetchViaFirecrawl(url) {
+async function fetchViaFirecrawl(url, { cacheBust = false } = {}) {
   const apiKey = (process.env.FIRECRAWL_API_KEY || "")
     .replace(/^FIRECRAWL_API_KEY=/i, "")
     .trim();
@@ -114,6 +114,9 @@ async function fetchViaFirecrawl(url) {
     const wait = FIRECRAWL_MIN_INTERVAL_MS - (Date.now() - firecrawlLastStartedAt);
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     firecrawlLastStartedAt = Date.now();
+
+    const requestUrl = new URL(url);
+    if (cacheBust) requestUrl.searchParams.set("r24cb", `${VERSION}-${Date.now()}`);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FIRECRAWL_TIMEOUT_MS);
@@ -126,7 +129,7 @@ async function fetchViaFirecrawl(url) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          url: url.href,
+          url: requestUrl.href,
           formats: ["rawHtml"],
           onlyMainContent: false,
           maxAge: 0,
@@ -171,7 +174,7 @@ async function fetchPage(url, { requireListing = false, richMedia = false } = {}
     if (process.env.FIRECRAWL_API_KEY && (requireListing || richMedia)) {
       console.warn(`Using Firecrawl fallback for ${url.href}: ${error.message}`);
       try {
-        return { format: "html", body: await fetchViaFirecrawl(url) };
+        return { format: "html", body: await fetchViaFirecrawl(url, { cacheBust: requireListing }) };
       } catch (firecrawlError) {
         console.warn(`Firecrawl fetch failed for ${url.href}; trying browser fallback: ${firecrawlError.message}`);
       }
