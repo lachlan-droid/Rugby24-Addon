@@ -51,14 +51,16 @@ function fetchWithCurl(url) {
   });
 }
 
-function fetchViaJina(url) {
+function fetchViaJina(url, { richMedia = false } = {}) {
   const source = new URL(url);
   const proxyUrl = `https://r.jina.ai/http://${source.host}${source.pathname}${source.search}`;
+  const headers = richMedia ? ["--header", "X-Retain-Media: html", "--header", "X-With-Iframe: true"] : [];
   return new Promise((resolve, reject) => {
     const child = spawn("curl", [
       "--fail", "--silent", "--show-error", "--location", "--compressed",
       "--connect-timeout", "20", "--max-time", "45",
       "--user-agent", USER_AGENT,
+      ...headers,
       proxyUrl,
     ], { stdio: ["ignore", "pipe", "pipe"] });
     const stdout = [];
@@ -93,18 +95,36 @@ function fetchWithBrowser(url) {
   });
 }
 
-async function fetchListing(url) {
+function looksLikeListing(body) {
+  return /full\s+match|match\s+replay|highlights?|replay/i.test(body) &&
+    /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b/i.test(body);
+}
+
+function looksLikePlayer(body) {
+  return /hlsManifestUrl|\.m3u8|videoembed|videoEmbed|data-movie-id|<video\b/i.test(body);
+}
+
+async function fetchPage(url, { requireListing = false, richMedia = false } = {}) {
   try {
-    return { format: "html", body: await fetchWithCurl(url) };
+    const body = await fetchWithCurl(url);
+    if (!requireListing || looksLikeListing(body) || looksLikePlayer(body)) return { format: "html", body };
+    throw new Error("direct response did not contain a usable Rugby24 page");
   } catch (error) {
     console.warn(`Direct source fetch failed for ${url.href}; trying browser fallback: ${error.message}`);
     try {
-      return { format: "html", body: await fetchWithBrowser(url) };
+      const body = await fetchWithBrowser(url);
+      const usable = requireListing ? looksLikeListing(body) : (!richMedia || looksLikeListing(body) || looksLikePlayer(body));
+      if (usable) return { format: "html", body };
+      throw new Error("browser response did not contain a usable Rugby24 page");
     } catch (browserError) {
       console.warn(`Browser fetch failed for ${url.href}; using Jina Reader fallback: ${browserError.message}`);
-      return { format: "markdown", body: await fetchViaJina(url) };
+      return { format: "markdown", body: await fetchViaJina(url, { richMedia }) };
     }
   }
+}
+
+function fetchListing(url) {
+  return fetchPage(url, { requireListing: true });
 }
 
 function idFor(item) {
@@ -131,7 +151,7 @@ async function writeJson(relativePath, value) {
 
 async function streamFor(item) {
   try {
-    const fetched = await fetchListing(new URL(item.url));
+    const fetched = await fetchPage(new URL(item.url), { richMedia: true });
     const article = parseArticle(fetched.body, item.url);
     if (article.hlsUrl) {
       return [{
@@ -144,7 +164,7 @@ async function streamFor(item) {
     if (article.embeds.length) {
       for (const embed of article.embeds) {
         try {
-          const player = parseArticle((await fetchListing(new URL(embed))).body, item.url);
+          const player = parseArticle((await fetchPage(new URL(embed), { richMedia: true })).body, item.url);
           if (player.hlsUrl) {
             return [{
               name: "Direct HLS stream",
@@ -188,6 +208,9 @@ for (let page = 0; page < PAGE_COUNT; page += 1) {
 }
 
 const items = [...all.values()].sort((a, b) => b.publishedAt - a.publishedAt || a.title.localeCompare(b.title));
+if (!items.length) {
+  throw new Error("No Rugby24 replay entries were parsed; refusing to publish an empty catalog.");
+}
 for (const catalog of catalogs) {
   const selected = items.filter(catalog.test).map((item) => preview(item, catalog.name));
   await writeJson(`catalog/movie/${catalog.id}.json`, { metas: selected });
