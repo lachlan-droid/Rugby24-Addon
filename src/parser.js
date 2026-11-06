@@ -38,6 +38,18 @@ function attribute(tag, name) {
   return match ? decodeHtml(match[1]) : "";
 }
 
+function decodeEmbeddedUrl(value = "") {
+  return decodeHtml(value)
+    .replace(/\\u0026/gi, "&")
+    .replace(/\\u003d/gi, "=")
+    .replace(/\\\//g, "/")
+    .replace(/\\"/g, '"');
+}
+
+function isPlayerUrl(value = "") {
+  return /^(https?:\/\/)(?:www\.)?(?:ok\.ru|odnoklassniki\.ru|odkl\.ru|bysesukior\.com)\//i.test(value);
+}
+
 function absoluteUrl(value, baseUrl) {
   try {
     const url = new URL(value, baseUrl);
@@ -164,13 +176,23 @@ export function parseArticle(html, articleUrl) {
     `Authorized Rugby24 replay: ${title}`;
 
   const embeds = [];
-  const srcRe = /(?:src|data-src)=["'](https?:\/\/[^"']+)["']/gi;
-  for (const match of html.matchAll(srcRe)) {
-    const url = decodeHtml(match[1]);
-    if (/^(https?:\/\/)(?:www\.)?(ok\.ru|bysesukior\.com)\//i.test(url) && !embeds.includes(url)) embeds.push(url);
-  }
+  const addEmbed = (value) => {
+    const url = decodeEmbeddedUrl(value).replace(/[),;]+$/, "");
+    if (isPlayerUrl(url) && !embeds.includes(url)) embeds.push(url);
+  };
 
-  const decodedHtml = decodeHtml(html);
+  // Rugby24 has used iframe src, data-src, data-url and data-embed attributes
+  // over time. Capture all of them so the source player remains available even
+  // when no portable HLS URL is exposed in the article HTML.
+  const attrRe = /(?:src|data-src|data-url|data-embed|data-video|href)=["']([^"']+)["']/gi;
+  for (const match of html.matchAll(attrRe)) addEmbed(match[1]);
+
+  // Some responses escape URLs inside JSON/script blocks instead of putting
+  // them in a normal iframe attribute.
+  const decodedHtml = decodeEmbeddedUrl(html);
+  const playerUrlRe = /https?:\/\/[^"'\s<>\\]+/gi;
+  for (const match of decodedHtml.matchAll(playerUrlRe)) addEmbed(match[0]);
+
   const hlsMatch = decodedHtml.match(/"hlsManifestUrl"\s*:\s*"([^" ]*?\.m3u8[^" ]*)"/i) ??
     decodedHtml.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/i);
 
@@ -183,7 +205,7 @@ export function parseArticle(html, articleUrl) {
     description,
     durationSeconds: durationMatch ? Number(durationMatch[1]) : undefined,
     embeds,
-    hlsUrl: hlsMatch ? hlsMatch[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&") : "",
+    hlsUrl: hlsMatch ? decodeEmbeddedUrl(hlsMatch[1]) : "",
   };
 }
 
