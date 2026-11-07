@@ -13,7 +13,9 @@ const DIST = join(process.cwd(), "static", "dist");
 const STREAM_CONCURRENCY = Math.max(Number(process.env.STREAM_CONCURRENCY || 6), 1);
 const FIRECRAWL_TIMEOUT_MS = Math.max(Number(process.env.FIRECRAWL_TIMEOUT_MS || 30000), 5000);
 const FIRECRAWL_MIN_INTERVAL_MS = Math.max(Number(process.env.FIRECRAWL_MIN_INTERVAL_MS || 6500), 0);
+const USE_FIRECRAWL = process.env.USE_FIRECRAWL !== "false";
 const MAX_ITEMS = Math.max(Number(process.env.MAX_ITEMS || 100), 1);
+const MAX_AGE_DAYS = Math.max(Number(process.env.MAX_AGE_DAYS || 180), 1);
 const EMBED_RESOLVE_LIMIT = Math.max(Number(process.env.EMBED_RESOLVE_LIMIT || 25), 0);
 const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
   "https://sports-replay.michaelrobgrove.workers.dev/stremio/247c929c3684fde3bce7f081eeaf04b5e2d72efbf80e6fe9/manifest.json";
@@ -198,7 +200,7 @@ async function fetchPage(url, { requireListing = false, richMedia = false } = {}
     throw new Error("direct response did not contain a usable Rugby24 page");
   } catch (error) {
     console.warn(`Direct source fetch failed for ${url.href}; trying browser fallback: ${error.message}`);
-    if (process.env.FIRECRAWL_API_KEY && (requireListing || richMedia)) {
+    if (USE_FIRECRAWL && process.env.FIRECRAWL_API_KEY && (requireListing || richMedia)) {
       console.warn(`Using Firecrawl fallback for ${url.href}: ${error.message}`);
       try {
         return { format: "html", body: await fetchViaFirecrawl(url, { cacheBust: requireListing }) };
@@ -212,7 +214,7 @@ async function fetchPage(url, { requireListing = false, richMedia = false } = {}
       if (usable) return { format: "html", body };
       throw new Error("browser response did not contain a usable Rugby24 page");
     } catch (browserError) {
-      if (process.env.FIRECRAWL_API_KEY && richMedia && !requireListing) {
+      if (USE_FIRECRAWL && process.env.FIRECRAWL_API_KEY && richMedia && !requireListing) {
         console.warn(`Browser fetch failed for ${url.href}; using Firecrawl media fallback: ${browserError.message}`);
         try {
           return { format: "html", body: await fetchViaFirecrawl(url) };
@@ -554,19 +556,22 @@ while (!SKIP_LIVE_SOURCE && queue.length && visited.size < PAGE_COUNT) {
   console.log(`Fetched source page ${visited.size}/${PAGE_COUNT}; ${all.size} unique replays`);
 }
 
-const items = [...all.values()].sort((a, b) => b.publishedAt - a.publishedAt || a.title.localeCompare(b.title));
+const cutoff = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+const items = [...all.values()]
+  .filter((item) => item.publishedAt >= cutoff)
+  .sort((a, b) => b.publishedAt - a.publishedAt || a.title.localeCompare(b.title));
 if (!items.length) {
   console.warn("No Rugby24 pages were available; restoring the last published catalogue without Firecrawl.");
   const fallbackItems = await restorePublishedStaticFiles();
   if (!fallbackItems.length) {
-    throw new Error("No Rugby24 replay entries were available from the source or the published fallback.");
+  throw new Error(`No Rugby24 replay entries were available in the last ${MAX_AGE_DAYS} days from the source or the published fallback.`);
   }
   await buildSportsMetadataOverlay(fallbackItems);
   console.log(`Restored ${fallbackItems.length} published Rugby24 entries and rebuilt the metadata overlay`);
   process.exit(0);
 }
 const publishedItems = items.slice(0, MAX_ITEMS);
-console.log(`Publishing ${publishedItems.length} newest replays from ${items.length} discovered entries`);
+console.log(`Publishing ${publishedItems.length} newest replays from ${items.length} entries in the last ${MAX_AGE_DAYS} days`);
 for (const catalog of catalogs) {
   const selected = publishedItems.filter(catalog.test).map((item) => preview(item, catalog.name));
   await writeJson(`catalog/movie/${catalog.id}.json`, { metas: selected });
