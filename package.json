@@ -7,6 +7,9 @@
   "scripts": {
     "start": "node src/server.js",
     "build:static": "node static/build-static.mjs",
+    "trial:refresh": "node scripts/refresh-local.mjs",
+    "trial:serve": "node scripts/serve-static.mjs",
+    "trial": "node scripts/trial.mjs",
     "test": "node --test"
   },
   "engines": {

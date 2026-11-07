@@ -24,6 +24,7 @@ const CATALOG_SCOPE = "sports-catalog";
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
 const SKIP_LIVE_SOURCE = process.env.SKIP_LIVE_SOURCE === "true";
+const ALLOW_PUBLISHED_FALLBACK = process.env.ALLOW_PUBLISHED_FALLBACK !== "false";
 const SECTION_PATHS = [
   "premiership-rugby",
   "top14",
@@ -561,6 +562,9 @@ const items = [...all.values()]
   .filter((item) => item.publishedAt >= cutoff)
   .sort((a, b) => b.publishedAt - a.publishedAt || a.title.localeCompare(b.title));
 if (!items.length) {
+  if (!ALLOW_PUBLISHED_FALLBACK) {
+    throw new Error(`No live Rugby24 replay entries were available in the first ${PAGE_COUNT} source page(s). The local trial will not use the published fallback.`);
+  }
   console.warn("No Rugby24 pages were available; restoring the last published catalogue without Firecrawl.");
   const fallbackItems = await restorePublishedStaticFiles();
   if (!fallbackItems.length) {
