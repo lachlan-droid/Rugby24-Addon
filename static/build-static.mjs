@@ -30,6 +30,7 @@ const SPORTSDB_SCOPE = "sportsdb";
 const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_RETRY_DAYS = Math.max(Number(process.env.SPORTSDB_THUMBNAIL_RETRY_DAYS || 7), 1);
+const SPORTSDB_THUMBNAIL_CACHE_VERSION = "2";
 const SPORTSDB_THUMBNAIL_CACHE_FILE = join(process.cwd(), "static", "sportsdb-thumbnails.json");
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
@@ -71,6 +72,7 @@ function shouldLookupSportsDbThumbnail(sourceItem) {
   const cached = sportsDbThumbnailCache[sourceItem.id];
   if (!cached) return true;
   if (cached.poster) return false;
+  if (cached.lookupVersion !== SPORTSDB_THUMBNAIL_CACHE_VERSION) return true;
   const checkedAt = Date.parse(cached.checkedAt || "");
   if (!Number.isFinite(checkedAt)) return true;
   return Date.now() - checkedAt >= SPORTSDB_THUMBNAIL_RETRY_DAYS * 86400000;
@@ -451,29 +453,35 @@ async function fetchSportsDbSearchEvent(sourceItem) {
   const teams = replayTeamPair(sourceItem.name);
   if (teams.length !== 2) return null;
   const sportLabel = /league|nrl|super league/i.test(sourceItem.name) ? "Rugby League" : "Rugby";
-  const query = `${teams[0]} ${sportLabel} vs ${teams[1]} ${sportLabel}`;
-  const wait = SPORTSDB_MIN_INTERVAL_MS - (Date.now() - sportsDbLastStartedAt);
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  sportsDbLastStartedAt = Date.now();
-  const url = new URL(`${SPORTSDB_API_BASE}/${encodeURIComponent(SPORTSDB_API_KEY)}/searchevents.php`);
-  url.searchParams.set("e", query);
-  try {
-    const response = await fetchJson(url.href);
-    const events = Array.isArray(response?.event) ? response.event : [];
-    return events
-      .filter((event) => sportsDbSportMatches(sourceItem.sport, event.strSport))
-      .map((event) => ({ event, score: sourceEventSimilarity(sourceItem, event) }))
-      .filter(({ score }) => score >= 0.55)
-      .sort((left, right) => right.score - left.score)[0]?.event || null;
-  } catch (error) {
-    if (/HTTP 429/.test(error.message)) {
-      sportsDbSearchRateLimited = true;
-      console.warn("SportsDB rate limit reached during event search; leaving remaining covers blank rather than using source posters.");
-      return null;
+  const queries = [...new Set([
+    `${teams[0]} vs ${teams[1]}`,
+    `${teams[0]} ${sportLabel} vs ${teams[1]} ${sportLabel}`,
+  ])];
+  for (const query of queries) {
+    const wait = SPORTSDB_MIN_INTERVAL_MS - (Date.now() - sportsDbLastStartedAt);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    sportsDbLastStartedAt = Date.now();
+    const url = new URL(`${SPORTSDB_API_BASE}/${encodeURIComponent(SPORTSDB_API_KEY)}/searchevents.php`);
+    url.searchParams.set("e", query);
+    try {
+      const response = await fetchJson(url.href);
+      const events = Array.isArray(response?.event) ? response.event : [];
+      const event = events
+        .filter((candidate) => sportsDbSportMatches(sourceItem.sport, candidate.strSport))
+        .map((candidate) => ({ event: candidate, score: sourceEventSimilarity(sourceItem, candidate) }))
+        .filter(({ score }) => score >= 0.55)
+        .sort((left, right) => right.score - left.score)[0]?.event || null;
+      if (event) return event;
+    } catch (error) {
+      if (/HTTP 429/.test(error.message)) {
+        sportsDbSearchRateLimited = true;
+        console.warn("SportsDB rate limit reached during event search; leaving remaining covers blank rather than using source posters.");
+        return null;
+      }
+      console.warn(`SportsDB event search failed for ${query}: ${error.message}`);
     }
-    console.warn(`SportsDB event search failed for ${query}: ${error.message}`);
-    return null;
   }
+  return null;
 }
 
 async function sportsDbEventIndex(items) {
@@ -587,6 +595,7 @@ async function buildSportsMetadataOverlay() {
       sportsDbThumbnailCache[sourceItem.id] = {
         poster,
         checkedAt: new Date().toISOString(),
+        lookupVersion: SPORTSDB_THUMBNAIL_CACHE_VERSION,
       };
     }
     const meta = {
