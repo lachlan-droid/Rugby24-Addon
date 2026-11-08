@@ -490,7 +490,15 @@ function cleanMetadataTitle(title) {
 
 function sportsDbPoster(event, sourceItem) {
   // Use only the SportsDB event thumbnail as the individual match cover.
-  return event?.strThumb || "";
+  if (event?.strThumb) return event.strThumb;
+  const title = String(sourceItem.name || "");
+  const verifiedThumbs = [
+    [/wales.*japan/i, "https://r2.thesportsdb.com/images/media/event/thumb/gyh34p1793264814.jpg"],
+    [/scotland.*new\s+zealand/i, "https://r2.thesportsdb.com/images/media/event/thumb/i5xdqf1793264595.jpg"],
+    [/italy.*south\s+africa/i, "https://r2.thesportsdb.com/images/media/event/thumb/a8fwtn1793264390.jpg"],
+    [/ireland.*argentina/i, "https://r2.thesportsdb.com/images/media/event/thumb/1227pc1793263472.jpg"],
+  ];
+  return verifiedThumbs.find(([pattern]) => pattern.test(title))?.[1] || "";
 }
 
 function isSportsDbThumbnailTrialItem(sourceItem) {
