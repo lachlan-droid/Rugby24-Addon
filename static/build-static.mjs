@@ -26,7 +26,9 @@ const SPORTS_REPLAY_METADATA_CATALOGS = new Set(["rugby"]);
 const METADATA_SCOPE = "sports-metadata";
 const CATALOG_SCOPE = "sports-catalog";
 const SPORTSDB_SCOPE = "sportsdb";
-const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "Nations Championship").trim().toLowerCase();
+// Keep the full Rugby catalogue. The thumbnail trial can be narrowed independently.
+const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
+const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "Nations Championship").trim().toLowerCase();
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
 const SKIP_LIVE_SOURCE = process.env.SKIP_LIVE_SOURCE === "true";
@@ -491,6 +493,10 @@ function sportsDbPoster(event, sourceItem) {
   return event?.strThumb || "";
 }
 
+function isSportsDbThumbnailTrialItem(sourceItem) {
+  return !SPORTSDB_THUMBNAIL_FILTER || String(sourceItem.name || "").toLowerCase().includes(SPORTSDB_THUMBNAIL_FILTER);
+}
+
 function sportsDbTitle(event, sourceItem) {
   if (!event) return cleanMetadataTitle(sourceItem.name);
   const title = event.strEvent || [event.strHomeTeam, event.strAwayTeam].filter(Boolean).join(" vs ");
@@ -525,12 +531,16 @@ async function buildSportsMetadataOverlay() {
   const sourceItems = (await sportsReplayMovieItems())
     .filter((item) => !SPORTSDB_COMPETITION_FILTER || String(item.name || "").toLowerCase().includes(SPORTSDB_COMPETITION_FILTER))
     .sort((left, right) => String(right.releaseInfo || "").localeCompare(String(left.releaseInfo || "")));
-  const eventIndex = await sportsDbEventIndex(sourceItems);
+  const thumbnailTrialItems = sourceItems.filter(isSportsDbThumbnailTrialItem);
+  const eventIndex = await sportsDbEventIndex(thumbnailTrialItems);
   const entries = [];
   let matchedCount = 0;
 
   for (const sourceItem of sourceItems) {
-    const event = bestSportsDbEvent(sourceItem, eventIndex) || await fetchSportsDbSearchEvent(sourceItem);
+    const isThumbnailTrial = isSportsDbThumbnailTrialItem(sourceItem);
+    const event = isThumbnailTrial
+      ? bestSportsDbEvent(sourceItem, eventIndex) || await fetchSportsDbSearchEvent(sourceItem)
+      : null;
     if (event) matchedCount += 1;
     const date = sourceItem.releaseInfo || event?.dateEventLocal || event?.dateEvent || "";
     const title = sportsDbTitle(event, sourceItem);
