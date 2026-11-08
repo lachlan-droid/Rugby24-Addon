@@ -476,7 +476,8 @@ function rugbyCategory(event, sourceItem) {
   if (/super rugby/i.test(value)) return "Super Rugby";
   if (/nrl|super league|league world cup/i.test(value)) return "Rugby League";
   if (/wxv|women/i.test(value)) return "Women's Rugby";
-  if (/international|test match|b[o\u00f8]ledisloe|rugby championship|world cup|nations championship/i.test(value)) return "Internationals";
+  if (/nations championship/i.test(value)) return "Nations Championship";
+  if (/international|test match|b[o\u00f8]ledisloe|rugby championship|world cup/i.test(value)) return "Internationals";
   return "Rugby Union";
 }
 
@@ -522,6 +523,7 @@ async function buildSportsMetadataOverlay() {
     ["top14", "Top 14", (entry) => entry.category === "Top 14"],
     ["super-rugby", "Super Rugby", (entry) => entry.category === "Super Rugby"],
     ["six-nations", "Six Nations", (entry) => entry.category === "Six Nations"],
+    ["nations-championship", "Nations Championship", (entry) => entry.category === "Nations Championship"],
     ["internationals", "Internationals", (entry) => entry.category === "Internationals"],
     ["premiership", "Premiership Rugby", (entry) => entry.category === "Premiership Rugby"],
     ["urc", "URC", (entry) => entry.category === "URC"],
