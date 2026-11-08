@@ -48,7 +48,8 @@ const SECTION_PATHS = [
 let firecrawlQueue = Promise.resolve();
 let firecrawlLastStartedAt = 0;
 let sportsDbLastStartedAt = 0;
-let sportsDbRateLimited = false;
+let sportsDbDayRateLimited = false;
+let sportsDbSearchRateLimited = false;
 
 const catalogs = [
   { id: "rugby24-latest", name: "Latest rugby replays", test: () => true },
@@ -396,7 +397,7 @@ function sourceEventSimilarity(sourceItem, event) {
 }
 
 async function fetchSportsDbEvents(date) {
-  if (sportsDbRateLimited) return [];
+  if (sportsDbDayRateLimited) return [];
   const wait = SPORTSDB_MIN_INTERVAL_MS - (Date.now() - sportsDbLastStartedAt);
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   sportsDbLastStartedAt = Date.now();
@@ -407,7 +408,7 @@ async function fetchSportsDbEvents(date) {
     return Array.isArray(response?.events) ? response.events : [];
   } catch (error) {
     if (/HTTP 429/.test(error.message)) {
-      sportsDbRateLimited = true;
+      sportsDbDayRateLimited = true;
       console.warn("SportsDB rate limit reached; using existing Sports Replay metadata for the remaining items. Add a personal API key to increase reliability.");
       return [];
     }
@@ -417,7 +418,7 @@ async function fetchSportsDbEvents(date) {
 }
 
 async function fetchSportsDbSearchEvent(sourceItem) {
-  if (sportsDbRateLimited) return null;
+  if (sportsDbSearchRateLimited) return null;
   const teams = replayTeamPair(sourceItem.name);
   if (teams.length !== 2) return null;
   const sportLabel = /league|nrl|super league/i.test(sourceItem.name) ? "Rugby League" : "Rugby";
@@ -437,7 +438,7 @@ async function fetchSportsDbSearchEvent(sourceItem) {
       .sort((left, right) => right.score - left.score)[0]?.event || null;
   } catch (error) {
     if (/HTTP 429/.test(error.message)) {
-      sportsDbRateLimited = true;
+      sportsDbSearchRateLimited = true;
       console.warn("SportsDB rate limit reached during event search; leaving remaining covers blank rather than using source posters.");
       return null;
     }
@@ -453,7 +454,7 @@ async function sportsDbEventIndex(items) {
   const index = new Map();
   for (const date of requests) {
     index.set(date, await fetchSportsDbEvents(date));
-    if (sportsDbRateLimited) break;
+    if (sportsDbDayRateLimited) break;
   }
   return index;
 }
