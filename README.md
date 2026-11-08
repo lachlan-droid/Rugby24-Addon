@@ -93,7 +93,7 @@ If the trial reports HTTP 403 or says no live entries were available, Rugby24 is
 
 ## Sports Replay metadata
 
-The metadata companion now reads all movie catalogues from the Sports Replay add-on and uses TheSportsDB for event titles, dates, competition names, and artwork where a dated home/away match can be matched. The Sports Replay add-on continues to provide the stream entries. The public demo key can be rate-limited; set `SPORTSDB_API_KEY` in `.env` to your own key if you have one. Refresh requests are spaced to respect the documented free API rate limit, and a 429 response stops further SportsDB calls for that refresh while preserving the existing Sports Replay metadata.
+The metadata companion reads only the Rugby and UFC/MMA movie catalogues from the Sports Replay add-on and uses TheSportsDB for event titles, dates, competition names, and artwork where a dated home/away match can be matched. Football and Basketball are left untouched. The Sports Replay add-on continues to provide the stream entries. The public demo key can be rate-limited; set `SPORTSDB_API_KEY` in `.env` to your own key if you have one. Refresh requests are spaced to respect the documented free API rate limit, and a 429 response stops further SportsDB calls for that refresh while preserving the existing Sports Replay metadata.
 
 Nuvio must be able to reach the URL. A phone or TV usually cannot reach `localhost` on your Mac; for local testing use your Mac's LAN IP, for example `http://192.168.1.20:7000/<ADDON_TOKEN>/manifest.json`, with the device on the same network. For a persistent private add-on, deploy this folder to a small HTTPS Node host and keep `ADDON_TOKEN` secret.
 

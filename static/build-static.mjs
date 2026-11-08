@@ -22,6 +22,7 @@ const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
 const SPORTSDB_API_BASE = (process.env.SPORTSDB_API_BASE || "https://www.thesportsdb.com/api/v1/json").replace(/\/$/, "");
 const SPORTSDB_API_KEY = (process.env.SPORTSDB_API_KEY || "123").trim();
 const SPORTSDB_MIN_INTERVAL_MS = Math.max(Number(process.env.SPORTSDB_MIN_INTERVAL_MS || 2500), 0);
+const SPORTS_REPLAY_METADATA_CATALOGS = new Set(["rugby", "mma"]);
 const METADATA_SCOPE = "sports-metadata";
 const CATALOG_SCOPE = "sports-catalog";
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
@@ -322,7 +323,8 @@ function sourceSportForCatalog(catalog) {
 
 async function sportsReplayMovieItems() {
   const manifest = await fetchJson(SPORTS_REPLAY_MANIFEST);
-  const catalogs = (manifest.catalogs || []).filter((catalog) => catalog.type === "movie");
+  const catalogs = (manifest.catalogs || []).filter((catalog) =>
+    catalog.type === "movie" && SPORTS_REPLAY_METADATA_CATALOGS.has(catalog.id));
   const items = new Map();
   for (const catalog of catalogs) {
     try {
@@ -509,8 +511,6 @@ async function buildSportsMetadataOverlay() {
   }
 
   const catalogDefinitions = [
-    ["football", "Football", (entry) => entry.sourceItem.sport === "American Football"],
-    ["basketball", "Basketball", (entry) => entry.sourceItem.sport === "Basketball"],
     ["rugby", "Rugby", (entry) => entry.sourceItem.sport === "Rugby"],
     ["mma", "UFC/MMA", (entry) => entry.sourceItem.sport === "Fighting"],
     ["top14", "Top 14", (entry) => entry.category === "Top 14"],
@@ -542,7 +542,7 @@ async function buildSportsMetadataOverlay() {
     id: "private.rugby24.sports-replay.metadata",
     version: VERSION,
     name: "Sports Replay Metadata",
-    description: "TheSportsDB titles, event artwork, dates, and competition tags for the Sports Replay add-on.",
+    description: "TheSportsDB titles, event artwork, dates, and competition tags for Rugby and UFC/MMA Sports Replay items.",
     resources: [
       { name: "catalog", types: ["movie"] },
       { name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] },
@@ -555,7 +555,7 @@ async function buildSportsMetadataOverlay() {
     id: "private.rugby24.sports-replay.catalogs",
     version: VERSION,
     name: "Sports Competition Catalogs",
-    description: "SportsDB-backed sports rows and rugby competition rows; streams remain provided by the Sports Replay add-on.",
+    description: "SportsDB-backed Rugby and UFC/MMA rows; streams remain provided by the Sports Replay add-on.",
     resources: [{ name: "catalog", types: ["movie"] }],
     types: ["movie"],
     catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
