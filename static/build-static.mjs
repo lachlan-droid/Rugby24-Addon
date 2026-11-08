@@ -479,6 +479,10 @@ function rugbyCategory(event, sourceItem) {
   return "Rugby Union";
 }
 
+function outputCatalogId(id) {
+  return ["rugby", "mma"].includes(id) ? id : `sports-replay-${id}`;
+}
+
 async function buildSportsMetadataOverlay() {
   const sourceItems = await sportsReplayMovieItems();
   const eventIndex = await sportsDbEventIndex(sourceItems);
@@ -533,32 +537,33 @@ async function buildSportsMetadataOverlay() {
       .map((entry) => entry.meta);
     if (metas.length) {
       availableCatalogs.push([id, name]);
-      await writeScopedJson(METADATA_SCOPE, `catalog/movie/sports-replay-${id}.json`, { metas });
-      await writeScopedJson(CATALOG_SCOPE, `catalog/movie/sports-replay-${id}.json`, { metas });
+      const outputId = outputCatalogId(id);
+      await writeScopedJson(METADATA_SCOPE, `catalog/movie/${outputId}.json`, { metas });
+      await writeScopedJson(CATALOG_SCOPE, `catalog/movie/${outputId}.json`, { metas });
     }
   }
 
   await writeScopedJson(METADATA_SCOPE, "manifest.json", {
     id: "private.rugby24.sports-replay.metadata",
     version: VERSION,
-    name: "Sports Replay Metadata",
+    name: "Rugby + UFC SportsDB Metadata",
     description: "TheSportsDB titles, event artwork, dates, and competition tags for Rugby and UFC/MMA Sports Replay items.",
     resources: [
       { name: "catalog", types: ["movie"] },
       { name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] },
     ],
     types: ["movie"],
-    catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
+    catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: outputCatalogId(id), name })),
     behaviorHints: { configurable: false, adult: false, p2p: false },
   });
   await writeScopedJson(CATALOG_SCOPE, "manifest.json", {
     id: "private.rugby24.sports-replay.catalogs",
     version: VERSION,
-    name: "Sports Competition Catalogs",
+    name: "Rugby + UFC SportsDB Catalog",
     description: "SportsDB-backed Rugby and UFC/MMA rows; streams remain provided by the Sports Replay add-on.",
     resources: [{ name: "catalog", types: ["movie"] }],
     types: ["movie"],
-    catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
+    catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: outputCatalogId(id), name })),
     behaviorHints: { configurable: false, adult: false, p2p: false },
   });
   console.log(`Built SportsDB metadata for ${sourceItems.length} Sports Replay items; matched ${matchedCount} events and wrote ${availableCatalogs.length} catalog rows`);
