@@ -22,9 +22,10 @@ const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
 const SPORTSDB_API_BASE = (process.env.SPORTSDB_API_BASE || "https://www.thesportsdb.com/api/v1/json").replace(/\/$/, "");
 const SPORTSDB_API_KEY = (process.env.SPORTSDB_API_KEY || "123").trim();
 const SPORTSDB_MIN_INTERVAL_MS = Math.max(Number(process.env.SPORTSDB_MIN_INTERVAL_MS || 2500), 0);
-const SPORTS_REPLAY_METADATA_CATALOGS = new Set(["rugby", "mma"]);
+const SPORTS_REPLAY_METADATA_CATALOGS = new Set(["rugby"]);
 const METADATA_SCOPE = "sports-metadata";
 const CATALOG_SCOPE = "sports-catalog";
+const SPORTSDB_SCOPE = "sportsdb";
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
 const SKIP_LIVE_SOURCE = process.env.SKIP_LIVE_SOURCE === "true";
@@ -512,6 +513,7 @@ async function buildSportsMetadataOverlay() {
     };
     entries.push({ sourceItem, event, meta, category: sourceItem.sport === "Rugby" ? rugbyCategory(event, sourceItem) : sourceItem.sport });
     await writeScopedJson(METADATA_SCOPE, `meta/movie/${sourceItem.id}.json`, { meta });
+    await writeScopedJson(SPORTSDB_SCOPE, `meta/movie/${sourceItem.id}.json`, { meta });
   }
 
   const catalogDefinitions = [
@@ -564,6 +566,31 @@ async function buildSportsMetadataOverlay() {
     resources: [{ name: "catalog", types: ["movie"] }],
     types: ["movie"],
     catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: outputCatalogId(id), name })),
+    behaviorHints: { configurable: false, adult: false, p2p: false },
+  });
+
+  const sportsDbCatalogs = [];
+  for (const [id, name, test] of catalogDefinitions.filter(([id]) => id !== "mma")) {
+    const metas = entries
+      .filter(test)
+      .sort((a, b) => String(b.meta.releaseInfo || "").localeCompare(String(a.meta.releaseInfo || "")))
+      .map((entry) => entry.meta);
+    if (!metas.length) continue;
+    const outputId = `sportsdb-${id}`;
+    sportsDbCatalogs.push([outputId, name]);
+    await writeScopedJson(SPORTSDB_SCOPE, `catalog/movie/${outputId}.json`, { metas });
+  }
+  await writeScopedJson(SPORTSDB_SCOPE, "manifest.json", {
+    id: "private.sportsdb.rugby",
+    version: VERSION,
+    name: "SportsDB",
+    description: "SportsDB-backed Rugby catalogue with competition rows, posters, dates, and tags. Streams are provided by Sports Replay.",
+    resources: [
+      { name: "catalog", types: ["movie"] },
+      { name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] },
+    ],
+    types: ["movie"],
+    catalogs: sportsDbCatalogs.map(([id, name]) => ({ type: "movie", id, name })),
     behaviorHints: { configurable: false, adult: false, p2p: false },
   });
   console.log(`Built SportsDB metadata for ${sourceItems.length} Sports Replay items; matched ${matchedCount} events and wrote ${availableCatalogs.length} catalog rows`);
