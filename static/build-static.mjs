@@ -19,6 +19,9 @@ const MAX_AGE_DAYS = Math.max(Number(process.env.MAX_AGE_DAYS || 180), 1);
 const EMBED_RESOLVE_LIMIT = Math.max(Number(process.env.EMBED_RESOLVE_LIMIT || 25), 0);
 const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
   "https://sports-replay.michaelrobgrove.workers.dev/stremio/247c929c3684fde3bce7f081eeaf04b5e2d72efbf80e6fe9/manifest.json";
+const SPORTSDB_API_BASE = (process.env.SPORTSDB_API_BASE || "https://www.thesportsdb.com/api/v1/json").replace(/\/$/, "");
+const SPORTSDB_API_KEY = (process.env.SPORTSDB_API_KEY || "123").trim();
+const SPORTSDB_MIN_INTERVAL_MS = Math.max(Number(process.env.SPORTSDB_MIN_INTERVAL_MS || 2500), 0);
 const METADATA_SCOPE = "sports-metadata";
 const CATALOG_SCOPE = "sports-catalog";
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
@@ -42,6 +45,8 @@ const SECTION_PATHS = [
 
 let firecrawlQueue = Promise.resolve();
 let firecrawlLastStartedAt = 0;
+let sportsDbLastStartedAt = 0;
+let sportsDbRateLimited = false;
 
 const catalogs = [
   { id: "rugby24-latest", name: "Latest rugby replays", test: () => true },
@@ -306,64 +311,159 @@ async function restorePublishedStaticFiles() {
     }));
 }
 
-function sourceTeamPair(title) {
-  const prefix = String(title || "")
-    .replace(/\b(?:french\s+top\s*14|united\s+championship|gallagher\s+premiership|league\s+world\s+cup|hilux\s+npc|european\s+(?:champions|challenge)\s+cup|super\s+rugby|bledisloe\s+cup|download|full\s+match).*/i, "")
-    .trim();
-  const match = prefix.match(/^(.+?)\s+v(?:s\.?)?\s+(.+)$/i);
+function sourceSportForCatalog(catalog) {
+  const id = String(catalog.id || "").toLowerCase();
+  if (id === "rugby") return "Rugby";
+  if (id === "basketball") return "Basketball";
+  if (id === "football") return "American Football";
+  if (id === "mma") return "Fighting";
+  return catalog.name || "Sports";
+}
+
+async function sportsReplayMovieItems() {
+  const manifest = await fetchJson(SPORTS_REPLAY_MANIFEST);
+  const catalogs = (manifest.catalogs || []).filter((catalog) => catalog.type === "movie");
+  const items = new Map();
+  for (const catalog of catalogs) {
+    try {
+      const url = new URL(`catalog/movie/${catalog.id}.json`, SPORTS_REPLAY_MANIFEST).href;
+      const source = await fetchJson(url);
+      for (const item of Array.isArray(source?.metas) ? source.metas : []) {
+        if (!item?.id || items.has(item.id)) continue;
+        items.set(item.id, {
+          ...item,
+          sourceCatalogId: catalog.id,
+          sourceCatalogName: catalog.name,
+          sport: sourceSportForCatalog(catalog),
+        });
+      }
+    } catch (error) {
+      console.warn(`Could not load Sports Replay catalogue ${catalog.id}: ${error.message}`);
+    }
+  }
+  return [...items.values()];
+}
+
+function replayTeamPair(title) {
+  const first = String(title || "").split(/\s+—\s+|\s+-\s+/)[0].trim();
+  const match = first.match(/^(.+?)\s+(?:v|vs\.?|at|@)\s+(.+)$/i);
   return match ? [match[1], match[2]] : [];
 }
 
-function rugbyTeamPair(title) {
-  const first = String(title || "").split(/\s+-\s+/)[0].trim();
-  const match = first.match(/^(.+?)\s+v(?:s\.?)?\s+(.+)$/i);
-  return match ? [match[1], match[2]] : [];
-}
-
-function teamTokens(value) {
+function sportsDbTokens(value) {
   return new Set(String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, " ")
     .split(/\s+/)
-    .filter((token) => token && !["the", "club", "rugby", "saints"].includes(token)));
+    .filter((token) => token && token.length > 1 && !["the", "club", "rugby", "football", "basketball", "league", "union", "download", "live"].includes(token)));
+}
+
+function similarToken(left, right) {
+  if (left === right) return true;
+  if (left.length < 4 || right.length < 4) return false;
+  return left.startsWith(right) || right.startsWith(left);
 }
 
 function sideSimilarity(left, right) {
-  const a = teamTokens(left);
-  const b = teamTokens(right);
+  const a = sportsDbTokens(left);
+  const b = sportsDbTokens(right);
   if (!a.size || !b.size) return 0;
-  const overlap = [...a].filter((token) => b.has(token)).length;
+  const overlap = [...a].filter((token) => [...b].some((candidate) => similarToken(token, candidate))).length;
   return overlap / Math.max(Math.min(a.size, b.size), 1);
 }
 
-function matchSimilarity(source, replay) {
-  const sourceTeams = sourceTeamPair(source.name);
-  const replayTeams = rugbyTeamPair(replay.title);
-  if (source.releaseInfo !== replay.publishedAt.toISOString().slice(0, 10)) return 0;
-  if (sourceTeams.length !== 2 || replayTeams.length !== 2) return 0;
-  const ordered = (sideSimilarity(sourceTeams[0], replayTeams[0]) + sideSimilarity(sourceTeams[1], replayTeams[1])) / 2;
-  const reversed = (sideSimilarity(sourceTeams[0], replayTeams[1]) + sideSimilarity(sourceTeams[1], replayTeams[0])) / 2;
-  return Math.max(ordered, reversed);
+function sourceEventSimilarity(sourceItem, event) {
+  const sourceDate = String(sourceItem.releaseInfo || "").slice(0, 10);
+  const eventDate = String(event.dateEventLocal || event.dateEvent || "").slice(0, 10);
+  if (!sourceDate || sourceDate !== eventDate) return 0;
+  const sourceTeams = replayTeamPair(sourceItem.name);
+  const eventTeams = [event.strHomeTeam, event.strAwayTeam];
+  if (sourceTeams.length !== 2 || !eventTeams[0] || !eventTeams[1]) return 0;
+  const ordered = (sideSimilarity(sourceTeams[0], eventTeams[0]) + sideSimilarity(sourceTeams[1], eventTeams[1])) / 2;
+  const reversed = (sideSimilarity(sourceTeams[0], eventTeams[1]) + sideSimilarity(sourceTeams[1], eventTeams[0])) / 2;
+  const teamScore = Math.max(ordered, reversed);
+  const leagueScore = sideSimilarity(sourceItem.name, event.strLeague || "");
+  return Math.min(teamScore + Math.min(leagueScore * 0.1, 0.1), 1);
+}
+
+async function fetchSportsDbEvents(date) {
+  if (sportsDbRateLimited) return [];
+  const wait = SPORTSDB_MIN_INTERVAL_MS - (Date.now() - sportsDbLastStartedAt);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  sportsDbLastStartedAt = Date.now();
+  const url = new URL(`${SPORTSDB_API_BASE}/${encodeURIComponent(SPORTSDB_API_KEY)}/eventsday.php`);
+  url.searchParams.set("d", date);
+  try {
+    const response = await fetchJson(url.href);
+    return Array.isArray(response?.events) ? response.events : [];
+  } catch (error) {
+    if (/HTTP 429/.test(error.message)) {
+      sportsDbRateLimited = true;
+      console.warn("SportsDB rate limit reached; using existing Sports Replay metadata for the remaining items. Add a personal API key to increase reliability.");
+      return [];
+    }
+    console.warn(`SportsDB lookup failed for ${date}: ${error.message}`);
+    return [];
+  }
+}
+
+async function sportsDbEventIndex(items) {
+  const requests = [...new Set(items
+    .filter((item) => item.releaseInfo)
+    .map((item) => String(item.releaseInfo).slice(0, 10)))];
+  const index = new Map();
+  for (const date of requests) {
+    index.set(date, await fetchSportsDbEvents(date));
+    if (sportsDbRateLimited) break;
+  }
+  return index;
+}
+
+function sportsDbSportMatches(sourceSport, eventSport) {
+  const source = String(sourceSport || "").toLowerCase();
+  const actual = String(eventSport || "").toLowerCase();
+  if (source === "fighting") return /fighting|mma/.test(actual);
+  return actual === source;
+}
+
+function bestSportsDbEvent(sourceItem, index) {
+  const key = String(sourceItem.releaseInfo || "").slice(0, 10);
+  const events = (index.get(key) || []).filter((event) => sportsDbSportMatches(sourceItem.sport, event.strSport));
+  return events
+    .map((event) => ({ event, score: sourceEventSimilarity(sourceItem, event) }))
+    .filter(({ score }) => score >= 0.55)
+    .sort((left, right) => right.score - left.score)[0]?.event;
 }
 
 function cleanMetadataTitle(title) {
   return String(title || "")
     .replace(/\s*-\s*Full Match Replay\s*/i, " — ")
+    .replace(/\s+Download.*$/i, "")
     .replace(/\s+-\s+/g, " — ")
     .replace(/\s*—\s*—\s*/g, " — ")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
 
-function metadataTags(title) {
-  const value = String(title || "");
-  return ["Rugby", metadataCategory(value)];
+function sportsDbPoster(event, sourceItem) {
+  return event?.strThumb || event?.strFanart || event?.strPoster || event?.strBanner ||
+    event?.strHomeTeamBadge || event?.strAwayTeamBadge || sourceItem.poster || "";
 }
 
-function metadataCategory(title) {
-  const value = String(title || "");
+function sportsDbTitle(event, sourceItem) {
+  if (!event) return cleanMetadataTitle(sourceItem.name);
+  const title = event.strEvent || [event.strHomeTeam, event.strAwayTeam].filter(Boolean).join(" vs ");
+  return [title, event.strLeague].filter(Boolean).join(" — ") || cleanMetadataTitle(sourceItem.name);
+}
+
+function sportsDbTags(event, sourceItem) {
+  return [...new Set([sourceItem.sport, event?.strLeague || sourceItem.sourceCatalogName].filter(Boolean))];
+}
+
+function rugbyCategory(event, sourceItem) {
+  const value = `${event?.strLeague || ""} ${sourceItem.name || ""}`;
   if (/top\s*14/i.test(value)) return "Top 14";
   if (/prem|gallagher/i.test(value)) return "Premiership Rugby";
   if (/urc|united rugby/i.test(value)) return "URC";
@@ -373,65 +473,62 @@ function metadataCategory(title) {
   if (/super rugby/i.test(value)) return "Super Rugby";
   if (/nrl|super league|league world cup/i.test(value)) return "Rugby League";
   if (/wxv|women/i.test(value)) return "Women's Rugby";
-  if (/international|test match|b[o\u00f8]ledisloe|rugby championship|world cup/i.test(value)) return "Internationals";
+  if (/international|test match|b[o\u00f8]ledisloe|rugby championship|world cup|nations championship/i.test(value)) return "Internationals";
   return "Rugby Union";
 }
 
-async function buildSportsMetadataOverlay(rugbyItems) {
-  const catalogUrl = new URL("catalog/movie/rugby.json", SPORTS_REPLAY_MANIFEST).href;
-  const source = await fetchJson(catalogUrl);
-  const sourceItems = Array.isArray(source?.metas) ? source.metas : [];
-  const usedReplays = new Set();
+async function buildSportsMetadataOverlay() {
+  const sourceItems = await sportsReplayMovieItems();
+  const eventIndex = await sportsDbEventIndex(sourceItems);
   const entries = [];
+  let matchedCount = 0;
 
   for (const sourceItem of sourceItems) {
-    const candidates = rugbyItems
-      .filter((item) => !usedReplays.has(item.url))
-      .map((item) => ({ item, score: matchSimilarity(sourceItem, item) }))
-      .filter(({ score }) => score >= 0.5)
-      .sort((a, b) => b.score - a.score);
-    const matched = candidates[0]?.item;
-    if (matched) usedReplays.add(matched.url);
-
-    const date = sourceItem.releaseInfo || matched?.publishedAt.toISOString().slice(0, 10) || "";
-    const title = matched ? cleanMetadataTitle(matched.title) : cleanMetadataTitle(sourceItem.name);
-    const tags = metadataTags(matched?.title || sourceItem.name);
-    const poster = matched?.poster || sourceItem.poster;
+    const event = bestSportsDbEvent(sourceItem, eventIndex);
+    if (event) matchedCount += 1;
+    const date = sourceItem.releaseInfo || event?.dateEventLocal || event?.dateEvent || "";
+    const title = sportsDbTitle(event, sourceItem);
+    const tags = sportsDbTags(event, sourceItem);
+    const poster = sportsDbPoster(event, sourceItem);
     const meta = {
       id: sourceItem.id,
       type: "movie",
       name: title,
       posterShape: "landscape",
-      poster,
-      background: poster,
-      description: `${title}. Full-match replay published ${date}.`,
+      poster: poster || undefined,
+      background: poster || undefined,
+      description: `${title}. Sports replay published ${date}.`,
       releaseInfo: date,
       runtime: sourceItem.runtime || "2h",
       genre: tags,
       genres: tags,
       behaviorHints: { defaultVideoId: sourceItem.id },
     };
-    entries.push({ sourceItem, meta, category: metadataCategory(matched?.title || sourceItem.name) });
+    entries.push({ sourceItem, event, meta, category: sourceItem.sport === "Rugby" ? rugbyCategory(event, sourceItem) : sourceItem.sport });
     await writeScopedJson(METADATA_SCOPE, `meta/movie/${sourceItem.id}.json`, { meta });
   }
 
   const catalogDefinitions = [
-    ["top14", "Top 14"],
-    ["super-rugby", "Super Rugby"],
-    ["six-nations", "Six Nations"],
-    ["internationals", "Internationals"],
-    ["premiership", "Premiership Rugby"],
-    ["urc", "URC"],
-    ["champions-cup", "Champions Cup"],
-    ["challenge-cup", "Challenge Cup"],
-    ["rugby-league", "Rugby League"],
-    ["womens-rugby", "Women's Rugby"],
-    ["rugby-union", "Rugby Union"],
+    ["football", "Football", (entry) => entry.sourceItem.sport === "American Football"],
+    ["basketball", "Basketball", (entry) => entry.sourceItem.sport === "Basketball"],
+    ["rugby", "Rugby", (entry) => entry.sourceItem.sport === "Rugby"],
+    ["mma", "UFC/MMA", (entry) => entry.sourceItem.sport === "Fighting"],
+    ["top14", "Top 14", (entry) => entry.category === "Top 14"],
+    ["super-rugby", "Super Rugby", (entry) => entry.category === "Super Rugby"],
+    ["six-nations", "Six Nations", (entry) => entry.category === "Six Nations"],
+    ["internationals", "Internationals", (entry) => entry.category === "Internationals"],
+    ["premiership", "Premiership Rugby", (entry) => entry.category === "Premiership Rugby"],
+    ["urc", "URC", (entry) => entry.category === "URC"],
+    ["champions-cup", "Champions Cup", (entry) => entry.category === "Champions Cup"],
+    ["challenge-cup", "Challenge Cup", (entry) => entry.category === "Challenge Cup"],
+    ["rugby-league", "Rugby League", (entry) => entry.category === "Rugby League"],
+    ["womens-rugby", "Women's Rugby", (entry) => entry.category === "Women's Rugby"],
+    ["rugby-union", "Rugby Union", (entry) => entry.category === "Rugby Union"],
   ];
   const availableCatalogs = [];
-  for (const [id, name] of catalogDefinitions) {
+  for (const [id, name, test] of catalogDefinitions) {
     const metas = entries
-      .filter((entry) => entry.category === name)
+      .filter(test)
       .sort((a, b) => String(b.meta.releaseInfo || "").localeCompare(String(a.meta.releaseInfo || "")))
       .map((entry) => entry.meta);
     if (metas.length) {
@@ -444,8 +541,8 @@ async function buildSportsMetadataOverlay(rugbyItems) {
   await writeScopedJson(METADATA_SCOPE, "manifest.json", {
     id: "private.rugby24.sports-replay.metadata",
     version: VERSION,
-    name: "Rugby Replay Metadata",
-    description: "Clean rugby titles, competition tags, dates, descriptions, and Rugby24 artwork for the Sports Replay add-on.",
+    name: "Sports Replay Metadata",
+    description: "TheSportsDB titles, event artwork, dates, and competition tags for the Sports Replay add-on.",
     resources: [
       { name: "catalog", types: ["movie"] },
       { name: "meta", types: ["movie"], idPrefixes: ["sports-replay:"] },
@@ -457,14 +554,14 @@ async function buildSportsMetadataOverlay(rugbyItems) {
   await writeScopedJson(CATALOG_SCOPE, "manifest.json", {
     id: "private.rugby24.sports-replay.catalogs",
     version: VERSION,
-    name: "Rugby Competition Catalogs",
-    description: "Competition rows for Rugby24 replays, with Rugby24 artwork and dates; streams remain provided by the Sports Replay add-on.",
+    name: "Sports Competition Catalogs",
+    description: "SportsDB-backed sports rows and rugby competition rows; streams remain provided by the Sports Replay add-on.",
     resources: [{ name: "catalog", types: ["movie"] }],
     types: ["movie"],
     catalogs: availableCatalogs.map(([id, name]) => ({ type: "movie", id: `sports-replay-${id}`, name })),
     behaviorHints: { configurable: false, adult: false, p2p: false },
   });
-  console.log(`Built metadata overlay for ${sourceItems.length} Sports Replay items; matched ${usedReplays.size} Rugby24 pages`);
+  console.log(`Built SportsDB metadata for ${sourceItems.length} Sports Replay items; matched ${matchedCount} events and wrote ${availableCatalogs.length} catalog rows`);
 }
 
 async function streamFor(item, { resolveEmbeds = true } = {}) {
@@ -570,7 +667,7 @@ if (!items.length) {
   if (!fallbackItems.length) {
   throw new Error(`No Rugby24 replay entries were available in the last ${MAX_AGE_DAYS} days from the source or the published fallback.`);
   }
-  await buildSportsMetadataOverlay(fallbackItems);
+  await buildSportsMetadataOverlay();
   console.log(`Restored ${fallbackItems.length} published Rugby24 entries and rebuilt the metadata overlay`);
   process.exit(0);
 }
@@ -610,7 +707,7 @@ for (let start = 0; start < publishedItems.length; start += STREAM_CONCURRENCY) 
 }
 
 try {
-  await buildSportsMetadataOverlay(publishedItems);
+await buildSportsMetadataOverlay();
 } catch (error) {
   console.warn(`Could not build Sports Replay metadata overlay: ${error.message}`);
 }
