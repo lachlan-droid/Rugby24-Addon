@@ -451,9 +451,8 @@ function cleanMetadataTitle(title) {
 }
 
 function sportsDbPoster(event, sourceItem) {
-  // Use the SportsDB event thumbnail as the individual match cover. Keep the
-  // Sports Replay image only when SportsDB has no matched event thumbnail.
-  return event?.strThumb || sourceItem.poster || "";
+  // Use only the SportsDB event thumbnail as the individual match cover.
+  return event?.strThumb || "";
 }
 
 function sportsDbTitle(event, sourceItem) {
