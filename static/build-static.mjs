@@ -21,14 +21,14 @@ const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
   "https://sports-replay.michaelrobgrove.workers.dev/stremio/247c929c3684fde3bce7f081eeaf04b5e2d72efbf80e6fe9/manifest.json";
 const SPORTSDB_API_BASE = (process.env.SPORTSDB_API_BASE || "https://www.thesportsdb.com/api/v1/json").replace(/\/$/, "");
 const SPORTSDB_API_KEY = (process.env.SPORTSDB_API_KEY || "123").trim();
-const SPORTSDB_MIN_INTERVAL_MS = Math.max(Number(process.env.SPORTSDB_MIN_INTERVAL_MS || 2500), 0);
+const SPORTSDB_MIN_INTERVAL_MS = Math.max(Number(process.env.SPORTSDB_MIN_INTERVAL_MS || 6500), 0);
 const SPORTS_REPLAY_METADATA_CATALOGS = new Set(["rugby"]);
 const METADATA_SCOPE = "sports-metadata";
 const CATALOG_SCOPE = "sports-catalog";
 const SPORTSDB_SCOPE = "sportsdb";
 // Keep the full Rugby catalogue. The thumbnail trial can be narrowed independently.
 const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
-const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "Nations Championship").trim().toLowerCase();
+const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "").trim().toLowerCase();
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
 const SKIP_LIVE_SOURCE = process.env.SKIP_LIVE_SOURCE === "true";
