@@ -350,7 +350,11 @@ async function sportsReplayMovieItems() {
 function replayTeamPair(title) {
   const first = String(title || "").split(/\s+—\s+|\s+-\s+/)[0].trim();
   const match = first.match(/^(.+?)\s+(?:v|vs\.?|at|@)\s+(.+)$/i);
-  return match ? [match[1], match[2]] : [];
+  if (!match) return [];
+  const away = match[2]
+    .replace(/\s+(?:nations\s+championship|six\s+nations|french\s+top\s*14|top\s*14|gallagher\s+premiership|premiership|united\s+championship|urc|european\s+(?:champions|challenge)\s+cup|league\s+world\s+cup|super\s+rugby|rugby\s+championship|rugby\s+league|download|live|union|league).*$/i, "")
+    .trim();
+  return [match[1].trim(), away].filter(Boolean);
 }
 
 function sportsDbTokens(value) {
@@ -409,6 +413,36 @@ async function fetchSportsDbEvents(date) {
     }
     console.warn(`SportsDB lookup failed for ${date}: ${error.message}`);
     return [];
+  }
+}
+
+async function fetchSportsDbSearchEvent(sourceItem) {
+  if (sportsDbRateLimited) return null;
+  const teams = replayTeamPair(sourceItem.name);
+  if (teams.length !== 2) return null;
+  const sportLabel = /league|nrl|super league/i.test(sourceItem.name) ? "Rugby League" : "Rugby";
+  const query = `${teams[0]} ${sportLabel} vs ${teams[1]} ${sportLabel}`;
+  const wait = SPORTSDB_MIN_INTERVAL_MS - (Date.now() - sportsDbLastStartedAt);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  sportsDbLastStartedAt = Date.now();
+  const url = new URL(`${SPORTSDB_API_BASE}/${encodeURIComponent(SPORTSDB_API_KEY)}/searchevents.php`);
+  url.searchParams.set("e", query);
+  try {
+    const response = await fetchJson(url.href);
+    const events = Array.isArray(response?.event) ? response.event : [];
+    return events
+      .filter((event) => sportsDbSportMatches(sourceItem.sport, event.strSport))
+      .map((event) => ({ event, score: sourceEventSimilarity(sourceItem, event) }))
+      .filter(({ score }) => score >= 0.55)
+      .sort((left, right) => right.score - left.score)[0]?.event || null;
+  } catch (error) {
+    if (/HTTP 429/.test(error.message)) {
+      sportsDbRateLimited = true;
+      console.warn("SportsDB rate limit reached during event search; leaving remaining covers blank rather than using source posters.");
+      return null;
+    }
+    console.warn(`SportsDB event search failed for ${query}: ${error.message}`);
+    return null;
   }
 }
 
@@ -492,7 +526,7 @@ async function buildSportsMetadataOverlay() {
   let matchedCount = 0;
 
   for (const sourceItem of sourceItems) {
-    const event = bestSportsDbEvent(sourceItem, eventIndex);
+    const event = bestSportsDbEvent(sourceItem, eventIndex) || await fetchSportsDbSearchEvent(sourceItem);
     if (event) matchedCount += 1;
     const date = sourceItem.releaseInfo || event?.dateEventLocal || event?.dateEvent || "";
     const title = sportsDbTitle(event, sourceItem);
