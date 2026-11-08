@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { parseArticle, parseListing, parseListingMarkdown, parsePagination } from "../src/parser.js";
@@ -29,6 +29,8 @@ const SPORTSDB_SCOPE = "sportsdb";
 // Keep the full Rugby catalogue. The thumbnail trial can be narrowed independently.
 const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "").trim().toLowerCase();
+const SPORTSDB_THUMBNAIL_RETRY_DAYS = Math.max(Number(process.env.SPORTSDB_THUMBNAIL_RETRY_DAYS || 7), 1);
+const SPORTSDB_THUMBNAIL_CACHE_FILE = join(process.cwd(), "static", "sportsdb-thumbnails.json");
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
 const SKIP_LIVE_SOURCE = process.env.SKIP_LIVE_SOURCE === "true";
@@ -53,6 +55,30 @@ let firecrawlLastStartedAt = 0;
 let sportsDbLastStartedAt = 0;
 let sportsDbDayRateLimited = false;
 let sportsDbSearchRateLimited = false;
+let sportsDbThumbnailCache = {};
+
+async function loadSportsDbThumbnailCache() {
+  try {
+    const raw = await readFile(SPORTSDB_THUMBNAIL_CACHE_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) sportsDbThumbnailCache = parsed;
+  } catch (error) {
+    if (error.code !== "ENOENT") console.warn(`Could not read SportsDB thumbnail cache: ${error.message}`);
+  }
+}
+
+function shouldLookupSportsDbThumbnail(sourceItem) {
+  const cached = sportsDbThumbnailCache[sourceItem.id];
+  if (!cached) return true;
+  if (cached.poster) return false;
+  const checkedAt = Date.parse(cached.checkedAt || "");
+  if (!Number.isFinite(checkedAt)) return true;
+  return Date.now() - checkedAt >= SPORTSDB_THUMBNAIL_RETRY_DAYS * 86400000;
+}
+
+async function saveSportsDbThumbnailCache() {
+  await writeFile(SPORTSDB_THUMBNAIL_CACHE_FILE, `${JSON.stringify(sportsDbThumbnailCache, null, 2)}\n`);
+}
 
 const catalogs = [
   { id: "rugby24-latest", name: "Latest rugby replays", test: () => true },
@@ -536,24 +562,33 @@ function outputCatalogId(id) {
 }
 
 async function buildSportsMetadataOverlay() {
+  await loadSportsDbThumbnailCache();
   const sourceItems = (await sportsReplayMovieItems())
     .filter((item) => !SPORTSDB_COMPETITION_FILTER || String(item.name || "").toLowerCase().includes(SPORTSDB_COMPETITION_FILTER))
     .sort((left, right) => String(right.releaseInfo || "").localeCompare(String(left.releaseInfo || "")));
-  const thumbnailTrialItems = sourceItems.filter(isSportsDbThumbnailTrialItem);
+  const thumbnailTrialItems = sourceItems.filter((item) => isSportsDbThumbnailTrialItem(item) && shouldLookupSportsDbThumbnail(item));
   const eventIndex = await sportsDbEventIndex(thumbnailTrialItems);
   const entries = [];
   let matchedCount = 0;
 
   for (const sourceItem of sourceItems) {
     const isThumbnailTrial = isSportsDbThumbnailTrialItem(sourceItem);
-    const event = isThumbnailTrial
+    const cachedPoster = sportsDbThumbnailCache[sourceItem.id]?.poster || "";
+    const shouldLookup = isThumbnailTrial && shouldLookupSportsDbThumbnail(sourceItem);
+    const event = shouldLookup
       ? bestSportsDbEvent(sourceItem, eventIndex) || await fetchSportsDbSearchEvent(sourceItem)
       : null;
     if (event) matchedCount += 1;
     const date = sourceItem.releaseInfo || event?.dateEventLocal || event?.dateEvent || "";
     const title = sportsDbTitle(event, sourceItem);
     const tags = sportsDbTags(event, sourceItem);
-    const poster = sportsDbPoster(event, sourceItem);
+    const poster = cachedPoster || sportsDbPoster(event, sourceItem);
+    if (isThumbnailTrial && shouldLookup) {
+      sportsDbThumbnailCache[sourceItem.id] = {
+        poster,
+        checkedAt: new Date().toISOString(),
+      };
+    }
     const meta = {
       id: sourceItem.id,
       type: "movie",
@@ -572,6 +607,7 @@ async function buildSportsMetadataOverlay() {
     await writeScopedJson(METADATA_SCOPE, `meta/movie/${sourceItem.id}.json`, { meta });
     await writeScopedJson(SPORTSDB_SCOPE, `meta/movie/${sourceItem.id}.json`, { meta });
   }
+  await saveSportsDbThumbnailCache();
 
   const catalogDefinitions = [
     ["rugby", "Rugby", (entry) => entry.sourceItem.sport === "Rugby"],

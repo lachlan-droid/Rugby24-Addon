@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -43,6 +43,18 @@ jobs:
 
       - name: Generate static add-on files
         run: node static/build-static.mjs
+
+      - name: Persist SportsDB thumbnail cache
+        run: |
+          git add static/sportsdb-thumbnails.json
+          if git diff --cached --quiet; then
+            echo "No thumbnail cache changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update SportsDB thumbnail cache [skip ci]"
+          git push
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
