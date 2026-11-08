@@ -101,6 +101,8 @@ For the simpler Rugby-only setup, install the standalone SportsDB manifest below
 https://YOUR-GITHUB-USER.github.io/YOUR-REPOSITORY/YOUR_ADDON_TOKEN/sportsdb/manifest.json
 ```
 
+The current trial is filtered to `Nations Championship` items only. Change `SPORTSDB_COMPETITION_FILTER` to expand the trial later.
+
 Nuvio must be able to reach the URL. A phone or TV usually cannot reach `localhost` on your Mac; for local testing use your Mac's LAN IP, for example `http://192.168.1.20:7000/<ADDON_TOKEN>/manifest.json`, with the device on the same network. For a persistent private add-on, deploy this folder to a small HTTPS Node host and keep `ADDON_TOKEN` secret.
 
 ## Install in Nuvio
