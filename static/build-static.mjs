@@ -451,8 +451,9 @@ function cleanMetadataTitle(title) {
 }
 
 function sportsDbPoster(event, sourceItem) {
-  return event?.strThumb || event?.strFanart || event?.strPoster || event?.strBanner ||
-    event?.strHomeTeamBadge || event?.strAwayTeamBadge || sourceItem.poster || "";
+  // Use the SportsDB event thumbnail as the individual match cover. Keep the
+  // Sports Replay image only when SportsDB has no matched event thumbnail.
+  return event?.strThumb || sourceItem.poster || "";
 }
 
 function sportsDbTitle(event, sourceItem) {
