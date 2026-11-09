@@ -30,7 +30,7 @@ const SPORTSDB_SCOPE = "sportsdb";
 const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_RETRY_DAYS = Math.max(Number(process.env.SPORTSDB_THUMBNAIL_RETRY_DAYS || 7), 1);
-const SPORTSDB_THUMBNAIL_CACHE_VERSION = "5";
+const SPORTSDB_THUMBNAIL_CACHE_VERSION = "6";
 const SPORTSDB_THUMBNAIL_CACHE_FILE = join(process.cwd(), "static", "sportsdb-thumbnails.json");
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
@@ -408,19 +408,39 @@ const SPORTSDB_TEAM_ALIASES = new Map([
   ["clermont auvergne", "asm clermont auvergne"],
   ["clermont", "asm clermont auvergne"],
   ["bordeaux begles", "union bordeaux begles"],
-  ["lions", "emirates lions"],
+  ["lions", "lions"],
+  ["emirates lions", "lions"],
   ["stade francais", "stade francais paris"],
   ["toulon", "rc toulon"],
   ["castres", "castres olympique"],
   ["bayonne", "aviron bayonnais"],
   ["perpignan", "usa perpignan"],
   ["brive", "ca brive"],
+  ["bath", "bath rugby"],
+  ["benetton treviso", "benetton rugby"],
+  ["newcastle", "newcastle falcons"],
+  ["exeter", "exeter chiefs"],
+  ["leicester", "leicester tigers"],
+  ["gloucester", "gloucester rugby"],
+  ["bristol", "bristol bears"],
+  ["montpellier", "montpellier herault rugby"],
+  ["sharks", "sharks"],
+  ["the sharks", "sharks"],
+  ["dragons", "dragons rugby"],
+  ["canterbury", "canterbury rugby"],
+  ["northland", "northland rugby"],
+  ["taranaki", "taranaki rugby"],
+  ["waikato", "waikato rugby"],
+  ["north harbour", "north harbour rugby"],
+  ["otago", "otago rugby"],
+  ["hawkes bay", "hawkes bay rugby"],
   ["edinburgh", "edinburgh rugby"],
   ["glasgow", "glasgow warriors"],
   ["munster", "munster rugby"],
   ["ulster", "ulster rugby"],
   ["connacht", "connacht rugby"],
   ["zebre", "zebre parma"],
+  ["leinster", "leinster rugby"],
 ]);
 
 function sportsDbTeamKey(value) {
