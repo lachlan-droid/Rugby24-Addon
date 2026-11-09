@@ -610,32 +610,20 @@ function sportsDbTitle(event, sourceItem) {
 }
 
 function sportsDbTags(event, sourceItem) {
-  const value = `${event?.strLeague || ""} ${sourceItem.name || ""}`;
-  const tags = [sourceItem.sport, event?.strLeague || sourceItem.sourceCatalogName].filter(Boolean);
-  if (/premiership\s+cup|english\s+prem\s+rugby\s+cup|gallagher\s+prem(?:iership)?\s+cup/i.test(value)) {
-    tags.push("Premiership Cup", "Premiership Rugby");
-  } else if (/premiership|english\s+prem\s+rugby|gallagher\s+prem/i.test(value)) {
-    tags.push("Premiership Rugby");
-  }
-  if (/united\s+(?:rugby\s+)?championship|\burc\b/i.test(value)) tags.push("URC");
-  if (/hilux\s+npc|\bnpc\b|national provincial/i.test(value)) tags.push("NPC");
-  if (/european\s+(?:rugby\s+)?champions\s+cup|champions\s+cup/i.test(value)) tags.push("Champions Cup");
-  if (/european\s+(?:rugby\s+)?challenge\s+cup|challenge\s+cup/i.test(value)) tags.push("Challenge Cup");
-  return [...new Set(tags)];
+  return [...new Set([sourceItem.sport, event?.strLeague || sourceItem.sourceCatalogName].filter(Boolean))];
 }
 
 function rugbyCategory(event, sourceItem) {
   const value = `${event?.strLeague || ""} ${sourceItem.name || ""}`;
   if (/top\s*14/i.test(value)) return "Top 14";
-  if (/prem|gallagher|english\s+prem\s+rugby/i.test(value)) return "Premiership Rugby";
-  if (/urc|united\s+(?:rugby\s+)?championship/i.test(value)) return "URC";
+  if (/prem|gallagher/i.test(value)) return "Premiership Rugby";
+  if (/urc|united rugby/i.test(value)) return "URC";
   if (/champions cup/i.test(value)) return "Champions Cup";
   if (/challenge cup/i.test(value)) return "Challenge Cup";
   if (/six nations/i.test(value)) return "Six Nations";
   if (/super rugby/i.test(value)) return "Super Rugby";
   if (/nrl|super league|league world cup/i.test(value)) return "Rugby League";
   if (/wxv|women/i.test(value)) return "Women's Rugby";
-  if (/hilux\s+npc|\bnpc\b|national provincial/i.test(value)) return "NPC";
   if (/nations championship/i.test(value)) return "Nations Championship";
   if (/international|test match|b[o\u00f8]ledisloe|rugby championship|world cup/i.test(value)) return "Internationals";
   return "Rugby Union";
@@ -706,7 +694,6 @@ async function buildSportsMetadataOverlay() {
     ["urc", "URC", (entry) => entry.category === "URC"],
     ["champions-cup", "Champions Cup", (entry) => entry.category === "Champions Cup"],
     ["challenge-cup", "Challenge Cup", (entry) => entry.category === "Challenge Cup"],
-    ["npc", "NPC", (entry) => entry.category === "NPC"],
     ["rugby-league", "Rugby League", (entry) => entry.category === "Rugby League"],
     ["womens-rugby", "Women's Rugby", (entry) => entry.category === "Women's Rugby"],
     ["rugby-union", "Rugby Union", (entry) => entry.category === "Rugby Union"],
