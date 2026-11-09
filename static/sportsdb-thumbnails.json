@@ -374,5 +374,10 @@
     "poster": "https://r2.thesportsdb.com/images/media/event/thumb/vfzjye1714808778.jpg",
     "checkedAt": "2026-11-09T00:19:14.134Z",
     "lookupVersion": "5"
+  },
+  "sports-replay:aee58f9efe0009f69ec62904": {
+    "poster": "",
+    "checkedAt": "2026-11-09T22:26:28.475Z",
+    "lookupVersion": "7"
   }
 }
