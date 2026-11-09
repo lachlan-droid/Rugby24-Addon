@@ -30,7 +30,7 @@ const SPORTSDB_SCOPE = "sportsdb";
 const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_RETRY_DAYS = Math.max(Number(process.env.SPORTSDB_THUMBNAIL_RETRY_DAYS || 7), 1);
-const SPORTSDB_THUMBNAIL_CACHE_VERSION = "4";
+const SPORTSDB_THUMBNAIL_CACHE_VERSION = "5";
 const SPORTSDB_THUMBNAIL_CACHE_FILE = join(process.cwd(), "static", "sportsdb-thumbnails.json");
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
@@ -399,6 +399,45 @@ function sportsDbTokens(value) {
     .filter((token) => token && token.length > 1 && !["the", "club", "rugby", "football", "basketball", "league", "union", "download", "live"].includes(token)));
 }
 
+const SPORTSDB_TEAM_ALIASES = new Map([
+  ["toulouse", "stade toulousain"],
+  ["pau", "section paloise"],
+  ["northampton", "northampton saints"],
+  ["cardiff", "cardiff rugby"],
+  ["la rochelle", "stade rochelais"],
+  ["clermont auvergne", "asm clermont auvergne"],
+  ["clermont", "asm clermont auvergne"],
+  ["bordeaux begles", "union bordeaux begles"],
+  ["lions", "emirates lions"],
+  ["stade francais", "stade francais paris"],
+  ["toulon", "rc toulon"],
+  ["castres", "castres olympique"],
+  ["bayonne", "aviron bayonnais"],
+  ["perpignan", "usa perpignan"],
+  ["brive", "ca brive"],
+  ["edinburgh", "edinburgh rugby"],
+  ["glasgow", "glasgow warriors"],
+  ["munster", "munster rugby"],
+  ["ulster", "ulster rugby"],
+  ["connacht", "connacht rugby"],
+  ["zebre", "zebre parma"],
+]);
+
+function sportsDbTeamKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sportsDbTeamTokens(value) {
+  const key = sportsDbTeamKey(value);
+  return sportsDbTokens(SPORTSDB_TEAM_ALIASES.get(key) || key);
+}
+
 function similarToken(left, right) {
   if (left === right) return true;
   if (left.length < 4 || right.length < 4) return false;
@@ -406,8 +445,8 @@ function similarToken(left, right) {
 }
 
 function sideSimilarity(left, right) {
-  const a = sportsDbTokens(left);
-  const b = sportsDbTokens(right);
+  const a = sportsDbTeamTokens(left);
+  const b = sportsDbTeamTokens(right);
   if (!a.size || !b.size) return 0;
   const overlap = [...a].filter((token) => [...b].some((candidate) => similarToken(token, candidate))).length;
   return overlap / Math.max(Math.min(a.size, b.size), 1);
@@ -453,9 +492,12 @@ async function fetchSportsDbSearchEvent(sourceItem) {
   const teams = replayTeamPair(sourceItem.name);
   if (teams.length !== 2) return null;
   const sportLabel = /league|nrl|super league/i.test(sourceItem.name) ? "Rugby League" : "Rugby";
+  const aliasedTeams = teams.map((team) => SPORTSDB_TEAM_ALIASES.get(sportsDbTeamKey(team)) || team);
   const queries = [...new Set([
     `${teams[0]} vs ${teams[1]}`,
+    `${aliasedTeams[0]} vs ${aliasedTeams[1]}`,
     `${teams[0]} ${sportLabel} vs ${teams[1]} ${sportLabel}`,
+    `${aliasedTeams[0]} ${sportLabel} vs ${aliasedTeams[1]} ${sportLabel}`,
   ])];
   for (const query of queries) {
     const wait = SPORTSDB_MIN_INTERVAL_MS - (Date.now() - sportsDbLastStartedAt);
