@@ -30,7 +30,7 @@ const SPORTSDB_SCOPE = "sportsdb";
 const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_RETRY_DAYS = Math.max(Number(process.env.SPORTSDB_THUMBNAIL_RETRY_DAYS || 7), 1);
-const SPORTSDB_THUMBNAIL_CACHE_VERSION = "2";
+const SPORTSDB_THUMBNAIL_CACHE_VERSION = "4";
 const SPORTSDB_THUMBNAIL_CACHE_FILE = join(process.cwd(), "static", "sportsdb-thumbnails.json");
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
@@ -522,8 +522,8 @@ function cleanMetadataTitle(title) {
     .trim();
 }
 
-function sportsDbPoster(event, sourceItem) {
-  // Use only the SportsDB event thumbnail as the individual match cover.
+function sportsDbThumb(event, sourceItem) {
+  // SportsDB's Thumb field is the source of truth; never use the Poster field.
   if (event?.strThumb) return event.strThumb;
   const title = String(sourceItem.name || "");
   const verifiedThumbs = [
@@ -590,7 +590,7 @@ async function buildSportsMetadataOverlay() {
     const date = sourceItem.releaseInfo || event?.dateEventLocal || event?.dateEvent || "";
     const title = sportsDbTitle(event, sourceItem);
     const tags = sportsDbTags(event, sourceItem);
-    const poster = cachedPoster || sportsDbPoster(event, sourceItem);
+    const poster = cachedPoster || sportsDbThumb(event, sourceItem);
     if (isThumbnailTrial && shouldLookup) {
       sportsDbThumbnailCache[sourceItem.id] = {
         poster,
