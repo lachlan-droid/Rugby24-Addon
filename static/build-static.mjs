@@ -22,6 +22,8 @@ const SPORTS_REPLAY_MANIFEST = process.env.SPORTS_REPLAY_MANIFEST ||
 const SPORTSDB_API_BASE = (process.env.SPORTSDB_API_BASE || "https://www.thesportsdb.com/api/v1/json").replace(/\/$/, "");
 const SPORTSDB_API_KEY = (process.env.SPORTSDB_API_KEY || "123").trim();
 const SPORTSDB_MIN_INTERVAL_MS = Math.max(Number(process.env.SPORTSDB_MIN_INTERVAL_MS || 6500), 0);
+const SPORTSDB_WEBSITE_MIN_INTERVAL_MS = Math.max(Number(process.env.SPORTSDB_WEBSITE_MIN_INTERVAL_MS || 1000), 0);
+const SPORTSDB_USE_DATE_API = process.env.SPORTSDB_USE_DATE_API === "true";
 const SPORTS_REPLAY_METADATA_CATALOGS = new Set(["rugby"]);
 const METADATA_SCOPE = "sports-metadata";
 const CATALOG_SCOPE = "sports-catalog";
@@ -30,7 +32,7 @@ const SPORTSDB_SCOPE = "sportsdb";
 const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_RETRY_DAYS = Math.max(Number(process.env.SPORTSDB_THUMBNAIL_RETRY_DAYS || 7), 1);
-const SPORTSDB_THUMBNAIL_CACHE_VERSION = "8";
+const SPORTSDB_THUMBNAIL_CACHE_VERSION = "9";
 const SPORTSDB_THUMBNAIL_CACHE_FILE = join(process.cwd(), "static", "sportsdb-thumbnails.json");
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
@@ -576,7 +578,7 @@ async function fetchSportsDbWebsiteEvent(sourceItem) {
   ])];
   const sourceDate = String(sourceItem.releaseInfo || "").slice(0, 10);
   for (const query of queries) {
-    const wait = SPORTSDB_MIN_INTERVAL_MS - (Date.now() - sportsDbWebsiteLastStartedAt);
+    const wait = SPORTSDB_WEBSITE_MIN_INTERVAL_MS - (Date.now() - sportsDbWebsiteLastStartedAt);
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     sportsDbWebsiteLastStartedAt = Date.now();
     const url = `https://www.thesportsdb.com/search.php?q=${encodeURIComponent(query)}`;
@@ -698,7 +700,7 @@ async function buildSportsMetadataOverlay() {
     .filter((item) => !SPORTSDB_COMPETITION_FILTER || String(item.name || "").toLowerCase().includes(SPORTSDB_COMPETITION_FILTER))
     .sort((left, right) => String(right.releaseInfo || "").localeCompare(String(left.releaseInfo || "")));
   const thumbnailTrialItems = sourceItems.filter((item) => isSportsDbThumbnailTrialItem(item) && shouldLookupSportsDbThumbnail(item));
-  const eventIndex = await sportsDbEventIndex(thumbnailTrialItems);
+  const eventIndex = SPORTSDB_USE_DATE_API ? await sportsDbEventIndex(thumbnailTrialItems) : new Map();
   const entries = [];
   let matchedCount = 0;
 
@@ -707,7 +709,7 @@ async function buildSportsMetadataOverlay() {
     const cachedPoster = sportsDbThumbnailCache[sourceItem.id]?.poster || "";
     const shouldLookup = isThumbnailTrial && shouldLookupSportsDbThumbnail(sourceItem);
     const event = shouldLookup
-      ? bestSportsDbEvent(sourceItem, eventIndex) || await fetchSportsDbSearchEvent(sourceItem) || await fetchSportsDbWebsiteEvent(sourceItem)
+      ? bestSportsDbEvent(sourceItem, eventIndex) || await fetchSportsDbWebsiteEvent(sourceItem) || await fetchSportsDbSearchEvent(sourceItem)
       : null;
     if (event) matchedCount += 1;
     const date = sourceItem.releaseInfo || event?.dateEventLocal || event?.dateEvent || "";
