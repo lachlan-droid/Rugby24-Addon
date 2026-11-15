@@ -30,7 +30,7 @@ const SPORTSDB_SCOPE = "sportsdb";
 const SPORTSDB_COMPETITION_FILTER = (process.env.SPORTSDB_COMPETITION_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_FILTER = (process.env.SPORTSDB_THUMBNAIL_FILTER || "").trim().toLowerCase();
 const SPORTSDB_THUMBNAIL_RETRY_DAYS = Math.max(Number(process.env.SPORTSDB_THUMBNAIL_RETRY_DAYS || 7), 1);
-const SPORTSDB_THUMBNAIL_CACHE_VERSION = "7";
+const SPORTSDB_THUMBNAIL_CACHE_VERSION = "8";
 const SPORTSDB_THUMBNAIL_CACHE_FILE = join(process.cwd(), "static", "sportsdb-thumbnails.json");
 const PUBLISHED_FALLBACK_BASE = process.env.PUBLISHED_FALLBACK_BASE ||
   `https://lachlan-droid.github.io/Rugby24-Addon/${TOKEN}/`;
@@ -54,6 +54,7 @@ const SECTION_PATHS = [
 let firecrawlQueue = Promise.resolve();
 let firecrawlLastStartedAt = 0;
 let sportsDbLastStartedAt = 0;
+let sportsDbWebsiteLastStartedAt = 0;
 let sportsDbDayRateLimited = false;
 let sportsDbSearchRateLimited = false;
 let sportsDbThumbnailCache = {};
@@ -548,6 +549,64 @@ async function fetchSportsDbSearchEvent(sourceItem) {
   return null;
 }
 
+function decodeSportsDbHtml(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+function sportsDbThumbUrl(value) {
+  const url = new URL(decodeSportsDbHtml(value), "https://www.thesportsdb.com");
+  if (!/r2\.thesportsdb\.com\/images\/media\/event\/thumb\//i.test(url.href)) return "";
+  url.pathname = url.pathname.replace(/\/(?:small|medium|tiny)$/i, "");
+  return url.href;
+}
+
+async function fetchSportsDbWebsiteEvent(sourceItem) {
+  const teams = replayTeamPair(sourceItem.name);
+  if (teams.length !== 2) return null;
+  const aliasedTeams = teams.map((team) => SPORTSDB_TEAM_ALIASES.get(sportsDbTeamKey(team)) || team);
+  const queries = [...new Set([
+    `${teams[0]} ${teams[1]} rugby`,
+    `${aliasedTeams[0]} ${aliasedTeams[1]} rugby`,
+    `${teams[0]} ${teams[1]}`,
+    `${aliasedTeams[0]} ${aliasedTeams[1]}`,
+  ])];
+  const sourceDate = String(sourceItem.releaseInfo || "").slice(0, 10);
+  for (const query of queries) {
+    const wait = SPORTSDB_MIN_INTERVAL_MS - (Date.now() - sportsDbWebsiteLastStartedAt);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    sportsDbWebsiteLastStartedAt = Date.now();
+    const url = `https://www.thesportsdb.com/search.php?q=${encodeURIComponent(query)}`;
+    try {
+      const response = await fetch(url, { headers: { "User-Agent": USER_AGENT, Accept: "text/html" } });
+      if (!response.ok) continue;
+      const html = await response.text();
+      const pattern = /<a\s+href=['"](\/event\/[^'"]+)['"][\s\S]{0,2500}?<img\s+src=['"]([^'"]+)['"][^>]*>[\s\S]{0,1800}?\((\d{4}-\d{2}-\d{2})\)/gi;
+      for (const match of html.matchAll(pattern)) {
+        if (match[3] !== sourceDate) continue;
+        const thumb = sportsDbThumbUrl(match[2]);
+        if (!thumb) continue;
+        const slug = match[1].split("/").pop().replace(/^\d+-/, "").replace(/-/g, " ");
+        return {
+          strEvent: sourceItem.name || slug,
+          strHomeTeam: teams[0],
+          strAwayTeam: teams[1],
+          strLeague: "",
+          dateEvent: match[3],
+          dateEventLocal: match[3],
+          strThumb: thumb,
+        };
+      }
+    } catch (error) {
+      console.warn(`SportsDB website search failed for ${query}: ${error.message}`);
+    }
+  }
+  return null;
+}
+
 async function sportsDbEventIndex(items) {
   const requests = [...new Set(items
     .filter((item) => item.releaseInfo)
@@ -648,7 +707,7 @@ async function buildSportsMetadataOverlay() {
     const cachedPoster = sportsDbThumbnailCache[sourceItem.id]?.poster || "";
     const shouldLookup = isThumbnailTrial && shouldLookupSportsDbThumbnail(sourceItem);
     const event = shouldLookup
-      ? bestSportsDbEvent(sourceItem, eventIndex) || await fetchSportsDbSearchEvent(sourceItem)
+      ? bestSportsDbEvent(sourceItem, eventIndex) || await fetchSportsDbSearchEvent(sourceItem) || await fetchSportsDbWebsiteEvent(sourceItem)
       : null;
     if (event) matchedCount += 1;
     const date = sourceItem.releaseInfo || event?.dateEventLocal || event?.dateEvent || "";
