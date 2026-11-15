@@ -593,7 +593,7 @@ async function fetchSportsDbWebsiteEvent(sourceItem) {
         if (!thumb) continue;
         const slug = match[1].split("/").pop().replace(/^\d+-/, "").replace(/-/g, " ");
         return {
-          strEvent: sourceItem.name || slug,
+          strEvent: cleanMetadataTitle(sourceItem.name) || slug,
           strHomeTeam: teams[0],
           strAwayTeam: teams[1],
           strLeague: "",
