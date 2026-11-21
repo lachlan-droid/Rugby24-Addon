@@ -424,5 +424,15 @@
     "poster": "",
     "checkedAt": "2026-11-21T07:15:55.504Z",
     "lookupVersion": "9"
+  },
+  "sports-replay:a7d833eb22ef122864830fe2": {
+    "poster": "https://r2.thesportsdb.com/images/media/event/thumb/8b29zk1793265647.jpg",
+    "checkedAt": "2026-11-21T19:21:22.235Z",
+    "lookupVersion": "9"
+  },
+  "sports-replay:a1569b84383e2fdb3aef7ecd": {
+    "poster": "https://r2.thesportsdb.com/images/media/event/thumb/ec2kh01793265710.jpg",
+    "checkedAt": "2026-11-21T19:21:23.239Z",
+    "lookupVersion": "9"
   }
 }
